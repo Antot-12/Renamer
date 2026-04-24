@@ -22,10 +22,32 @@
 
 ### Core Renaming
 - **Smart Audio Tags** — automatically extracts Artist, Title, Album, Year, Genre from ID3/FLAC/OGG/etc.
-- **Templates** — `Artist - Title`, `Title (Artist)`, `## - Title`, `Album - Title`, `[Year] Artist - Title`
+- **20+ Templates** — ready-to-use naming patterns for music and general files
 - **Prefix / Suffix** — add text before or after filenames
 - **Find & Replace** — with optional **Regex support**
 - **Case Transformations** — Title Case, UPPER, lower, Sentence case, camelCase, PascalCase, snake_case, kebab-case
+
+### Audio Templates
+| Template | Example |
+|----------|---------|
+| `Виконавець - Назва` | `Coldplay - Yellow.mp3` |
+| `Назва - Виконавець` | `Yellow - Coldplay.mp3` |
+| `Назва (Виконавець)` | `Yellow (Coldplay).mp3` |
+| `## - Виконавець - Назва` | `01 - Coldplay - Yellow.mp3` |
+| `Альбом - Назва` | `Parachutes - Yellow.mp3` |
+| `[Рік] Виконавець - Назва` | `[2000] Coldplay - Yellow.mp3` |
+
+### File Templates
+| Template | Example |
+|----------|---------|
+| `## - Назва` | `01 - Document.pdf` |
+| `ВЕЛИКІ ЛІТЕРИ` | `DOCUMENT.PDF` |
+| `snake_case` | `my_document.pdf` |
+| `kebab-case` | `my-document.pdf` |
+| `camelCase` | `myDocument.pdf` |
+| `PascalCase` | `MyDocument.pdf` |
+| `Видалити числа` | Removes all digits |
+| `Видалити дужки` | Removes `()[]{}` content |
 
 ### Advanced Options
 - **Batch Numbering** — custom start number, step size, zero-padding
@@ -45,6 +67,7 @@
 - **Backup Option** — copy originals to backup folder before renaming
 - **History Log** — persistent log of all operations with CSV export
 - **Profiles** — save and load your favorite rename configurations
+- **Export/Import Profiles** — share your presets with others
 
 ### Supported File Types
 Audio, Images, Documents, Video, Archives, Code, Games, Presentations, and more.
@@ -52,10 +75,27 @@ Audio, Images, Documents, Video, Archives, Code, Games, Presentations, and more.
 ### UI/UX
 - **Dark Theme** with cyan accents (ttkbootstrap)
 - **Drag & Drop** files and folders
+- **Tooltips** — hover over any button for helpful hints
 - **Collapsible Advanced Options** — clean interface with power features hidden until needed
 - **Context Menu** — right-click for quick actions
-- **Live Log** — see what's happening in real-time
+- **Live Preview** — see new names as you type
 - **Portable EXE** — no Python installation required
+
+---
+
+## Hotkeys
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+A` | Select all |
+| `Ctrl+D` | Deselect all |
+| `Ctrl+Z` | Undo |
+| `Ctrl+Y` | Redo |
+| `Ctrl+P` | Preview changes |
+| `F5` | Refresh list |
+| `Delete` | Remove selected from list |
+| `Double-click` on "New Name" | Edit name manually |
+| `Double-click` on image | Preview |
 
 ---
 
@@ -139,20 +179,6 @@ The executable will be at `dist/Renamer.exe`
 
 ---
 
-## Hotkeys
-
-| Key | Action |
-|-----|--------|
-| `Ctrl+A` | Select all |
-| `Ctrl+D` | Deselect all |
-| `Ctrl+Z` | Undo |
-| `Ctrl+Y` | Redo |
-| `Delete` | Remove selected from list |
-| `Double-click` on "New Name" | Edit name manually |
-| `Double-click` on image | Preview |
-
----
-
 ## Project Structure
 
 ```
@@ -167,14 +193,16 @@ Renamer/
 │   ├── transformers.py   # Text transformations
 │   ├── duplicates.py     # Duplicate detection
 │   ├── history_log.py    # Persistent history
+│   ├── musicbrainz.py    # MusicBrainz API integration
 │   └── profiles.py       # Profile management
-├── tests/                # Test suite (185 tests)
+├── tests/                # Test suite (185+ tests)
 │   ├── test_transformers.py
 │   ├── test_history.py
 │   ├── test_duplicates.py
 │   ├── test_history_log.py
 │   ├── test_profiles.py
-│   └── test_metadata.py
+│   ├── test_metadata.py
+│   └── test_musicbrainz.py
 ├── run.py                # Entry point
 ├── run.bat               # Windows launcher
 ├── install.bat           # Windows installer
@@ -214,7 +242,7 @@ pip install pytest
 pytest tests/ -v
 ```
 
-All 185 tests should pass.
+All 185+ tests should pass.
 
 ---
 

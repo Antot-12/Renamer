@@ -9,8 +9,54 @@ import platform
 import re
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 from pathlib import Path
+
+
+class ToolTip:
+    """Tooltip widget for showing hints on hover."""
+
+    def __init__(self, widget: tk.Widget, text: str, delay: int = 500):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self.tip_window: Optional[tk.Toplevel] = None
+        self._after_id: Optional[str] = None
+
+        widget.bind("<Enter>", self._schedule_show)
+        widget.bind("<Leave>", self._hide)
+        widget.bind("<ButtonPress>", self._hide)
+
+    def _schedule_show(self, event=None):
+        self._cancel()
+        self._after_id = self.widget.after(self.delay, self._show)
+
+    def _cancel(self):
+        if self._after_id:
+            self.widget.after_cancel(self._after_id)
+            self._after_id = None
+
+    def _show(self, event=None):
+        if self.tip_window:
+            return
+        x = self.widget.winfo_rootx() + 20
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 5
+
+        self.tip_window = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+
+        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
+                        background="#2d2d2d", foreground="#02DDFD",
+                        relief="solid", borderwidth=1,
+                        font=("Segoe UI", 9), padx=8, pady=4)
+        label.pack()
+
+    def _hide(self, event=None):
+        self._cancel()
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
 
 # Try to import drag-and-drop support (may not work on all platforms)
 try:
@@ -154,11 +200,18 @@ class RenamerApp:
     AUDIO_TEMPLATES = {
         "Оригінал": lambda a, t, i, ext: t + ext if t else "",
         "Виконавець - Назва": lambda a, t, i, ext: f"{a} - {t}{ext}" if a and t else (t + ext if t else ""),
+        "Назва - Виконавець": lambda a, t, i, ext: f"{t} - {a}{ext}" if a and t else (t + ext if t else ""),
         "Назва (Виконавець)": lambda a, t, i, ext: f"{t} ({a}){ext}" if a and t else (t + ext if t else ""),
+        "Виконавець — Назва": lambda a, t, i, ext: f"{a} — {t}{ext}" if a and t else (t + ext if t else ""),
         "## - Назва": lambda a, t, i, ext: f"{i:02d} - {t}{ext}" if t else "",
         "## - Виконавець - Назва": lambda a, t, i, ext: f"{i:02d} - {a} - {t}{ext}" if a and t else "",
+        "## Виконавець - Назва": lambda a, t, i, ext: f"{i:02d} {a} - {t}{ext}" if a and t else "",
         "Альбом - Назва": lambda a, t, i, ext, album="": f"{album} - {t}{ext}" if album and t else (t + ext if t else ""),
+        "Альбом - ## - Назва": lambda a, t, i, ext, album="": f"{album} - {i:02d} - {t}{ext}" if album and t else "",
         "[Рік] Виконавець - Назва": lambda a, t, i, ext, year="": f"[{year}] {a} - {t}{ext}" if year and a and t else (f"{a} - {t}{ext}" if a and t else ""),
+        "Рік - Виконавець - Назва": lambda a, t, i, ext, year="": f"{year} - {a} - {t}{ext}" if year and a and t else (f"{a} - {t}{ext}" if a and t else ""),
+        "Тільки назва": lambda a, t, i, ext: f"{t}{ext}" if t else "",
+        "ВИКОНАВЕЦЬ - НАЗВА": lambda a, t, i, ext: f"{a.upper()} - {t.upper()}{ext}" if a and t else (t.upper() + ext if t else ""),
     }
 
     # File templates (no artist)
@@ -166,13 +219,22 @@ class RenamerApp:
         "Оригінал": lambda t, i, ext: t + ext if t else "",
         "## - Назва": lambda t, i, ext: f"{i:02d} - {t}{ext}" if t else "",
         "### - Назва": lambda t, i, ext: f"{i:03d} - {t}{ext}" if t else "",
+        "## Назва": lambda t, i, ext: f"{i:02d} {t}{ext}" if t else "",
+        "Назва ##": lambda t, i, ext: f"{t} {i:02d}{ext}" if t else "",
+        "Назва_##": lambda t, i, ext: f"{t}_{i:02d}{ext}" if t else "",
         "ВЕЛИКІ ЛІТЕРИ": lambda t, i, ext: (t.upper() + ext) if t else "",
         "малі літери": lambda t, i, ext: (t.lower() + ext) if t else "",
         "Назва_без_пробілів": lambda t, i, ext: (t.replace(" ", "_") + ext) if t else "",
+        "Назва-без-пробілів": lambda t, i, ext: (t.replace(" ", "-") + ext) if t else "",
+        "Назва без зайвих пробілів": lambda t, i, ext: (" ".join(t.split()) + ext) if t else "",
         "Title Case": lambda t, i, ext: (t.title() + ext) if t else "",
         "Sentence case": lambda t, i, ext: (t.capitalize() + ext) if t else "",
         "snake_case": lambda t, i, ext: (re.sub(r'[\s\-]+', '_', t).lower() + ext) if t else "",
         "kebab-case": lambda t, i, ext: (re.sub(r'[\s_]+', '-', t).lower() + ext) if t else "",
+        "camelCase": lambda t, i, ext: (t.split()[0].lower() + ''.join(w.title() for w in t.split()[1:]) + ext) if t and ' ' in t else (t.lower() + ext if t else ""),
+        "PascalCase": lambda t, i, ext: (''.join(w.title() for w in t.split()) + ext) if t else "",
+        "Видалити числа": lambda t, i, ext: (re.sub(r'\d+', '', t).strip() + ext) if t else "",
+        "Видалити дужки": lambda t, i, ext: (re.sub(r'\([^)]*\)|\[[^\]]*\]|\{[^}]*\}', '', t).strip() + ext) if t else "",
     }
 
     def __init__(self) -> None:
@@ -445,17 +507,21 @@ class RenamerApp:
         self.notebook.add(self.files_frame, text="  📁 Файли  ")
         self.notebook.add(self.settings_frame, text="  ⚙️ Налаштування  ")
 
-    def _create_button(self, parent, text: str, command, style: str = "primary") -> tb.Button:
-        """Створити кнопку з cyan/teal кольором."""
+    def _create_button(self, parent, text: str, command, style: str = "primary", tooltip: str = None) -> tb.Button:
+        """Створити кнопку з cyan/teal кольором та підказкою."""
         if style == "danger":
-            return tb.Button(parent, text=text, command=command, bootstyle="danger")
+            btn = tb.Button(parent, text=text, command=command, bootstyle="danger")
         elif style == "outline" or style == "secondary":
-            return tb.Button(parent, text=text, command=command, style="CyanOutline.TButton")
+            btn = tb.Button(parent, text=text, command=command, style="CyanOutline.TButton")
         elif style == "success":
-            return tb.Button(parent, text=text, command=command, style="Cyan.TButton")
+            btn = tb.Button(parent, text=text, command=command, style="Cyan.TButton")
         else:
-            # Primary buttons - use cyan filled
-            return tb.Button(parent, text=text, command=command, style="Cyan.TButton")
+            btn = tb.Button(parent, text=text, command=command, style="Cyan.TButton")
+
+        if tooltip:
+            ToolTip(btn, tooltip)
+
+        return btn
 
     def _setup_music_page(self) -> None:
         """Сторінка для музичних файлів - user-friendly layout."""
@@ -491,10 +557,10 @@ class RenamerApp:
 
         self._create_button(btn_row, "➕ Додати файли",
                            lambda: self._add_files_to(self.music_state, self.music_tree, AUDIO, self._refresh_music),
-                           "primary").pack(side=tk.LEFT, padx=5)
+                           "primary", "Вибрати аудіо файли для додавання").pack(side=tk.LEFT, padx=5)
         self._create_button(btn_row, "📁 Додати папку",
                            lambda: self._add_folder_to(self.music_state, self.music_tree, AUDIO, self._refresh_music),
-                           "primary").pack(side=tk.LEFT, padx=5)
+                           "primary", "Додати всі аудіо файли з папки").pack(side=tk.LEFT, padx=5)
 
         # Right: Stats & Quick Actions
         right_panel = tk.Frame(top_section, bg=COLORS["bg_main"])
@@ -506,22 +572,33 @@ class RenamerApp:
         tk.Label(right_panel, textvariable=self.music_count_var, font=("Segoe UI", 24, "bold"),
                  bg=COLORS["bg_main"], fg=COLORS["cyan"]).pack(anchor="e", pady=(0, 10))
 
-        # Quick action buttons - 2x2 grid
+        # Quick action buttons - 2x2 grid with tooltips
         btn_grid = tk.Frame(right_panel, bg=COLORS["bg_main"])
         btn_grid.pack()
 
-        tb.Button(btn_grid, text="Все", width=7,
+        btn_all = tb.Button(btn_grid, text="Все", width=7,
                   command=lambda: self._select_all_in(self.music_state, self.music_tree),
-                  style="CyanOutline.TButton").grid(row=0, column=0, padx=2, pady=2, sticky="ew")
-        tb.Button(btn_grid, text="Ні", width=7,
+                  style="CyanOutline.TButton")
+        btn_all.grid(row=0, column=0, padx=2, pady=2, sticky="ew")
+        ToolTip(btn_all, "Вибрати всі файли (Ctrl+A)")
+
+        btn_none = tb.Button(btn_grid, text="Ні", width=7,
                   command=lambda: self._deselect_all_in(self.music_state, self.music_tree),
-                  style="CyanOutline.TButton").grid(row=0, column=1, padx=2, pady=2, sticky="ew")
-        tb.Button(btn_grid, text="Дубл", width=7,
+                  style="CyanOutline.TButton")
+        btn_none.grid(row=0, column=1, padx=2, pady=2, sticky="ew")
+        ToolTip(btn_none, "Зняти вибір з усіх файлів (Ctrl+D)")
+
+        btn_dup = tb.Button(btn_grid, text="Дубл", width=7,
                   command=lambda: self._find_duplicates(self.music_state, self.music_tree),
-                  style="CyanOutline.TButton").grid(row=1, column=0, padx=2, pady=2, sticky="ew")
-        tb.Button(btn_grid, text="Очист", width=7,
+                  style="CyanOutline.TButton")
+        btn_dup.grid(row=1, column=0, padx=2, pady=2, sticky="ew")
+        ToolTip(btn_dup, "Знайти дублікати файлів за хешем")
+
+        btn_clear = tb.Button(btn_grid, text="Очист", width=7,
                   command=lambda: self._clear_all_in(self.music_state, self.music_tree),
-                  style="CyanOutline.TButton").grid(row=1, column=1, padx=2, pady=2, sticky="ew")
+                  style="CyanOutline.TButton")
+        btn_clear.grid(row=1, column=1, padx=2, pady=2, sticky="ew")
+        ToolTip(btn_clear, "Очистити список файлів")
 
         # ===== MAIN TEMPLATE SECTION =====
         tmpl_frame = tk.LabelFrame(self.music_frame, text=" 📝 Налаштування перейменування ",
@@ -549,10 +626,10 @@ class RenamerApp:
         self.music_profile_combo.pack(side=tk.LEFT, padx=(8, 5))
         self.music_profile_combo.bind("<<ComboboxSelected>>", lambda e: self._load_profile_music())
 
-        self._create_button(row1, "▪", lambda: self._save_profile_music(), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "▫", lambda: self._delete_profile_music(), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "▲", lambda: self._export_profile("audio"), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "▼", lambda: self._import_profile("audio"), "outline").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "💾", lambda: self._save_profile_music(), "outline", "Зберегти профіль").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "🗑", lambda: self._delete_profile_music(), "outline", "Видалити профіль").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "📤", lambda: self._export_profile("audio"), "outline", "Експортувати профіль").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "📥", lambda: self._import_profile("audio"), "outline", "Імпортувати профіль").pack(side=tk.LEFT, padx=2)
 
         # Separator
         ttk.Separator(inner, orient="horizontal").pack(fill=tk.X, pady=8)
@@ -714,15 +791,15 @@ class RenamerApp:
                                style="Cyan.TButton", width=18)
         rename_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        # Secondary actions - outline buttons with icons
-        self._create_button(action_inner, "◉ Перегляд",
-                           lambda: self._show_preview(self.music_state), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(action_inner, "⎗",
-                           lambda: self._undo(self.music_history, self._refresh_music), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(action_inner, "⎘",
-                           lambda: self._redo(self.music_history, self._refresh_music), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(action_inner, "⟳",
-                           self._refresh_music, "outline").pack(side=tk.LEFT, padx=2)
+        # Secondary actions - outline buttons with icons and tooltips
+        self._create_button(action_inner, "👁 Перегляд",
+                           lambda: self._show_preview(self.music_state), "outline", "Переглянути зміни перед перейменуванням (Ctrl+P)").pack(side=tk.LEFT, padx=2)
+        self._create_button(action_inner, "↩ Скасувати",
+                           lambda: self._undo(self.music_history, self._refresh_music), "outline", "Скасувати останню операцію (Ctrl+Z)").pack(side=tk.LEFT, padx=2)
+        self._create_button(action_inner, "↪ Повторити",
+                           lambda: self._redo(self.music_history, self._refresh_music), "outline", "Повторити скасовану операцію (Ctrl+Y)").pack(side=tk.LEFT, padx=2)
+        self._create_button(action_inner, "🔄 Оновити",
+                           self._refresh_music, "outline", "Оновити список файлів (F5)").pack(side=tk.LEFT, padx=2)
 
         # Status on the right
         tk.Label(action_frame, textvariable=self.status_var, bg=COLORS["bg_secondary"],
@@ -778,10 +855,10 @@ class RenamerApp:
 
         self._create_button(btn_row, "➕ Додати файли",
                            lambda: self._add_files_to(self.files_state, self.files_tree, SUPPORTED, self._refresh_files),
-                           "primary").pack(side=tk.LEFT, padx=5)
+                           "primary", "Вибрати файли для додавання").pack(side=tk.LEFT, padx=5)
         self._create_button(btn_row, "📁 Додати папку",
                            lambda: self._add_folder_to(self.files_state, self.files_tree, SUPPORTED, self._refresh_files),
-                           "primary").pack(side=tk.LEFT, padx=5)
+                           "primary", "Додати всі файли з папки").pack(side=tk.LEFT, padx=5)
 
         # Right: Stats & Quick Actions
         right_panel = tk.Frame(top_section, bg=COLORS["bg_main"])
@@ -793,22 +870,33 @@ class RenamerApp:
         tk.Label(right_panel, textvariable=self.files_count_var, font=("Segoe UI", 24, "bold"),
                  bg=COLORS["bg_main"], fg=COLORS["cyan"]).pack(anchor="e", pady=(0, 10))
 
-        # Quick action buttons - 2x2 grid
+        # Quick action buttons - 2x2 grid with tooltips
         btn_grid = tk.Frame(right_panel, bg=COLORS["bg_main"])
         btn_grid.pack()
 
-        tb.Button(btn_grid, text="Все", width=7,
+        btn_all_f = tb.Button(btn_grid, text="Все", width=7,
                   command=lambda: self._select_all_in(self.files_state, self.files_tree),
-                  style="CyanOutline.TButton").grid(row=0, column=0, padx=2, pady=2, sticky="ew")
-        tb.Button(btn_grid, text="Ні", width=7,
+                  style="CyanOutline.TButton")
+        btn_all_f.grid(row=0, column=0, padx=2, pady=2, sticky="ew")
+        ToolTip(btn_all_f, "Вибрати всі файли (Ctrl+A)")
+
+        btn_none_f = tb.Button(btn_grid, text="Ні", width=7,
                   command=lambda: self._deselect_all_in(self.files_state, self.files_tree),
-                  style="CyanOutline.TButton").grid(row=0, column=1, padx=2, pady=2, sticky="ew")
-        tb.Button(btn_grid, text="Дубл", width=7,
+                  style="CyanOutline.TButton")
+        btn_none_f.grid(row=0, column=1, padx=2, pady=2, sticky="ew")
+        ToolTip(btn_none_f, "Зняти вибір з усіх файлів (Ctrl+D)")
+
+        btn_dup_f = tb.Button(btn_grid, text="Дубл", width=7,
                   command=lambda: self._find_duplicates(self.files_state, self.files_tree),
-                  style="CyanOutline.TButton").grid(row=1, column=0, padx=2, pady=2, sticky="ew")
-        tb.Button(btn_grid, text="Очист", width=7,
+                  style="CyanOutline.TButton")
+        btn_dup_f.grid(row=1, column=0, padx=2, pady=2, sticky="ew")
+        ToolTip(btn_dup_f, "Знайти дублікати файлів за хешем")
+
+        btn_clear_f = tb.Button(btn_grid, text="Очист", width=7,
                   command=lambda: self._clear_all_in(self.files_state, self.files_tree),
-                  style="CyanOutline.TButton").grid(row=1, column=1, padx=2, pady=2, sticky="ew")
+                  style="CyanOutline.TButton")
+        btn_clear_f.grid(row=1, column=1, padx=2, pady=2, sticky="ew")
+        ToolTip(btn_clear_f, "Очистити список файлів")
 
         # ===== MAIN TEMPLATE SECTION =====
         tmpl_frame = tk.LabelFrame(self.files_frame, text=" 📝 Налаштування перейменування ",
@@ -836,10 +924,10 @@ class RenamerApp:
         self.files_profile_combo.pack(side=tk.LEFT, padx=(8, 5))
         self.files_profile_combo.bind("<<ComboboxSelected>>", lambda e: self._load_profile_files())
 
-        self._create_button(row1, "▪", lambda: self._save_profile_files(), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "▫", lambda: self._delete_profile_files(), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "▲", lambda: self._export_profile("general"), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "▼", lambda: self._import_profile("general"), "outline").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "💾", lambda: self._save_profile_files(), "outline", "Зберегти профіль").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "🗑", lambda: self._delete_profile_files(), "outline", "Видалити профіль").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "📤", lambda: self._export_profile("general"), "outline", "Експортувати профіль").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "📥", lambda: self._import_profile("general"), "outline", "Імпортувати профіль").pack(side=tk.LEFT, padx=2)
 
         # Separator
         ttk.Separator(inner, orient="horizontal").pack(fill=tk.X, pady=8)
@@ -1003,15 +1091,15 @@ class RenamerApp:
                                style="Cyan.TButton", width=18)
         rename_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        # Secondary actions - outline buttons with icons
-        self._create_button(action_inner, "◉ Перегляд",
-                           lambda: self._show_preview(self.files_state), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(action_inner, "⎗",
-                           lambda: self._undo(self.files_history, self._refresh_files), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(action_inner, "⎘",
-                           lambda: self._redo(self.files_history, self._refresh_files), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(action_inner, "⟳",
-                           self._refresh_files, "outline").pack(side=tk.LEFT, padx=2)
+        # Secondary actions - outline buttons with icons and tooltips
+        self._create_button(action_inner, "👁 Перегляд",
+                           lambda: self._show_preview(self.files_state), "outline", "Переглянути зміни перед перейменуванням (Ctrl+P)").pack(side=tk.LEFT, padx=2)
+        self._create_button(action_inner, "↩ Скасувати",
+                           lambda: self._undo(self.files_history, self._refresh_files), "outline", "Скасувати останню операцію (Ctrl+Z)").pack(side=tk.LEFT, padx=2)
+        self._create_button(action_inner, "↪ Повторити",
+                           lambda: self._redo(self.files_history, self._refresh_files), "outline", "Повторити скасовану операцію (Ctrl+Y)").pack(side=tk.LEFT, padx=2)
+        self._create_button(action_inner, "🔄 Оновити",
+                           self._refresh_files, "outline", "Оновити список файлів (F5)").pack(side=tk.LEFT, padx=2)
 
         # Status on the right
         tk.Label(action_frame, textvariable=self.status_var, bg=COLORS["bg_secondary"],
