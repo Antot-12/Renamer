@@ -63,7 +63,7 @@ COLORS = {
     "bg_secondary": "#1a1a1a",
     "bg_input": "#252525",
     "bg_hover": "#2a2a2a",
-    "cyan": "#00e5ff",
+    "cyan": "#02DDFD",
     "cyan_dark": "#00b8d4",
     "cyan_dim": "#00838f",
     "cyan_selection": "#006064",
@@ -311,12 +311,15 @@ class RenamerApp:
 
         # Cyan outline button
         s.configure("CyanOutline.TButton",
-                    background=COLORS["bg_secondary"],
+                    background=COLORS["bg_main"],
                     foreground=COLORS["cyan"],
+                    bordercolor=COLORS["cyan"],
+                    relief="solid",
+                    borderwidth=1,
                     font=("Segoe UI", 10))
         s.map("CyanOutline.TButton",
-              background=[("active", COLORS["bg_hover"])],
-              foreground=[("active", COLORS["cyan"])])
+              background=[("active", COLORS["cyan_dim"]), ("pressed", COLORS["cyan_dark"])],
+              foreground=[("active", "#ffffff"), ("pressed", "#ffffff")])
 
         # Notebook tabs
         s.configure("TNotebook", background=COLORS["bg_main"])
@@ -447,10 +450,12 @@ class RenamerApp:
         if style == "danger":
             return tb.Button(parent, text=text, command=command, bootstyle="danger")
         elif style == "outline" or style == "secondary":
-            return tb.Button(parent, text=text, command=command, bootstyle="success-outline")
+            return tb.Button(parent, text=text, command=command, style="CyanOutline.TButton")
+        elif style == "success":
+            return tb.Button(parent, text=text, command=command, style="Cyan.TButton")
         else:
-            # Primary buttons - use success (teal/cyan-ish)
-            return tb.Button(parent, text=text, command=command, bootstyle="success")
+            # Primary buttons - use cyan filled
+            return tb.Button(parent, text=text, command=command, style="Cyan.TButton")
 
     def _setup_music_page(self) -> None:
         """Сторінка для музичних файлів - user-friendly layout."""
@@ -505,18 +510,18 @@ class RenamerApp:
         btn_grid = tk.Frame(right_panel, bg=COLORS["bg_main"])
         btn_grid.pack()
 
-        tb.Button(btn_grid, text="✓ Все", width=6,
+        tb.Button(btn_grid, text="Все", width=7,
                   command=lambda: self._select_all_in(self.music_state, self.music_tree),
-                  bootstyle="info-outline").grid(row=0, column=0, padx=1, pady=1, sticky="ew")
-        tb.Button(btn_grid, text="✗ Ні", width=6,
+                  style="CyanOutline.TButton").grid(row=0, column=0, padx=2, pady=2, sticky="ew")
+        tb.Button(btn_grid, text="Ні", width=7,
                   command=lambda: self._deselect_all_in(self.music_state, self.music_tree),
-                  bootstyle="info-outline").grid(row=0, column=1, padx=1, pady=1, sticky="ew")
-        tb.Button(btn_grid, text="Дубл", width=6,
+                  style="CyanOutline.TButton").grid(row=0, column=1, padx=2, pady=2, sticky="ew")
+        tb.Button(btn_grid, text="Дубл", width=7,
                   command=lambda: self._find_duplicates(self.music_state, self.music_tree),
-                  bootstyle="info-outline").grid(row=1, column=0, padx=1, pady=1, sticky="ew")
-        tb.Button(btn_grid, text="Очист", width=6,
+                  style="CyanOutline.TButton").grid(row=1, column=0, padx=2, pady=2, sticky="ew")
+        tb.Button(btn_grid, text="Очист", width=7,
                   command=lambda: self._clear_all_in(self.music_state, self.music_tree),
-                  bootstyle="info-outline").grid(row=1, column=1, padx=1, pady=1, sticky="ew")
+                  style="CyanOutline.TButton").grid(row=1, column=1, padx=2, pady=2, sticky="ew")
 
         # ===== MAIN TEMPLATE SECTION =====
         tmpl_frame = tk.LabelFrame(self.music_frame, text=" 📝 Налаштування перейменування ",
@@ -537,17 +542,17 @@ class RenamerApp:
         music_combo.pack(side=tk.LEFT, padx=(8, 20))
         music_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_music())
 
-        tk.Label(row1, text="💾 Профіль:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
+        tk.Label(row1, text="Профіль:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
                  font=("Segoe UI", 10)).pack(side=tk.LEFT)
         self.music_profile_combo = ttk.Combobox(row1, textvariable=self.music_profile_var,
                                                  values=[], width=14, state="readonly")
         self.music_profile_combo.pack(side=tk.LEFT, padx=(8, 5))
         self.music_profile_combo.bind("<<ComboboxSelected>>", lambda e: self._load_profile_music())
 
-        self._create_button(row1, "💾", lambda: self._save_profile_music(), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "🗑", lambda: self._delete_profile_music(), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "📤", lambda: self._export_profile("audio"), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "📥", lambda: self._import_profile("audio"), "outline").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "▪", lambda: self._save_profile_music(), "outline").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "▫", lambda: self._delete_profile_music(), "outline").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "▲", lambda: self._export_profile("audio"), "outline").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "▼", lambda: self._import_profile("audio"), "outline").pack(side=tk.LEFT, padx=2)
 
         # Separator
         ttk.Separator(inner, orient="horizontal").pack(fill=tk.X, pady=8)
@@ -701,22 +706,22 @@ class RenamerApp:
         action_inner = tk.Frame(action_frame, bg=COLORS["bg_secondary"])
         action_inner.pack(pady=10)
 
-        # Main action button - larger and more prominent
-        rename_btn = tb.Button(action_inner, text="🚀 ПЕРЕЙМЕНУВАТИ",
+        # Main action button - larger and more prominent with cyan fill
+        rename_btn = tb.Button(action_inner, text="  ПЕРЕЙМЕНУВАТИ  ",
                                command=lambda: self._rename_selected(self.music_state, self.music_tree, self.music_copy_var,
                                                          self._refresh_music, self.music_history,
                                                          self.music_backup_var, self.music_backup_dir_var),
-                               bootstyle="success", width=18)
+                               style="Cyan.TButton", width=18)
         rename_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        # Secondary actions
-        self._create_button(action_inner, "👁 Перегляд",
+        # Secondary actions - outline buttons with icons
+        self._create_button(action_inner, "◉ Перегляд",
                            lambda: self._show_preview(self.music_state), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(action_inner, "↩️",
+        self._create_button(action_inner, "⎗",
                            lambda: self._undo(self.music_history, self._refresh_music), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(action_inner, "↪️",
+        self._create_button(action_inner, "⎘",
                            lambda: self._redo(self.music_history, self._refresh_music), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(action_inner, "🔄",
+        self._create_button(action_inner, "⟳",
                            self._refresh_music, "outline").pack(side=tk.LEFT, padx=2)
 
         # Status on the right
@@ -792,18 +797,18 @@ class RenamerApp:
         btn_grid = tk.Frame(right_panel, bg=COLORS["bg_main"])
         btn_grid.pack()
 
-        tb.Button(btn_grid, text="✓ Все", width=6,
+        tb.Button(btn_grid, text="Все", width=7,
                   command=lambda: self._select_all_in(self.files_state, self.files_tree),
-                  bootstyle="info-outline").grid(row=0, column=0, padx=1, pady=1, sticky="ew")
-        tb.Button(btn_grid, text="✗ Ні", width=6,
+                  style="CyanOutline.TButton").grid(row=0, column=0, padx=2, pady=2, sticky="ew")
+        tb.Button(btn_grid, text="Ні", width=7,
                   command=lambda: self._deselect_all_in(self.files_state, self.files_tree),
-                  bootstyle="info-outline").grid(row=0, column=1, padx=1, pady=1, sticky="ew")
-        tb.Button(btn_grid, text="Дубл", width=6,
+                  style="CyanOutline.TButton").grid(row=0, column=1, padx=2, pady=2, sticky="ew")
+        tb.Button(btn_grid, text="Дубл", width=7,
                   command=lambda: self._find_duplicates(self.files_state, self.files_tree),
-                  bootstyle="info-outline").grid(row=1, column=0, padx=1, pady=1, sticky="ew")
-        tb.Button(btn_grid, text="Очист", width=6,
+                  style="CyanOutline.TButton").grid(row=1, column=0, padx=2, pady=2, sticky="ew")
+        tb.Button(btn_grid, text="Очист", width=7,
                   command=lambda: self._clear_all_in(self.files_state, self.files_tree),
-                  bootstyle="info-outline").grid(row=1, column=1, padx=1, pady=1, sticky="ew")
+                  style="CyanOutline.TButton").grid(row=1, column=1, padx=2, pady=2, sticky="ew")
 
         # ===== MAIN TEMPLATE SECTION =====
         tmpl_frame = tk.LabelFrame(self.files_frame, text=" 📝 Налаштування перейменування ",
@@ -824,17 +829,17 @@ class RenamerApp:
         files_combo.pack(side=tk.LEFT, padx=(8, 20))
         files_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_files())
 
-        tk.Label(row1, text="💾 Профіль:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
+        tk.Label(row1, text="Профіль:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
                  font=("Segoe UI", 10)).pack(side=tk.LEFT)
         self.files_profile_combo = ttk.Combobox(row1, textvariable=self.files_profile_var,
                                                  values=[], width=14, state="readonly")
         self.files_profile_combo.pack(side=tk.LEFT, padx=(8, 5))
         self.files_profile_combo.bind("<<ComboboxSelected>>", lambda e: self._load_profile_files())
 
-        self._create_button(row1, "💾", lambda: self._save_profile_files(), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "🗑", lambda: self._delete_profile_files(), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "📤", lambda: self._export_profile("general"), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "📥", lambda: self._import_profile("general"), "outline").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "▪", lambda: self._save_profile_files(), "outline").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "▫", lambda: self._delete_profile_files(), "outline").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "▲", lambda: self._export_profile("general"), "outline").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "▼", lambda: self._import_profile("general"), "outline").pack(side=tk.LEFT, padx=2)
 
         # Separator
         ttk.Separator(inner, orient="horizontal").pack(fill=tk.X, pady=8)
@@ -990,22 +995,22 @@ class RenamerApp:
         action_inner = tk.Frame(action_frame, bg=COLORS["bg_secondary"])
         action_inner.pack(pady=10)
 
-        # Main action button - larger and more prominent
-        rename_btn = tb.Button(action_inner, text="🚀 ПЕРЕЙМЕНУВАТИ",
+        # Main action button - larger and more prominent with cyan fill
+        rename_btn = tb.Button(action_inner, text="  ПЕРЕЙМЕНУВАТИ  ",
                                command=lambda: self._rename_selected(self.files_state, self.files_tree, self.files_copy_var,
                                                          self._refresh_files, self.files_history,
                                                          self.files_backup_var, self.files_backup_dir_var),
-                               bootstyle="success", width=18)
+                               style="Cyan.TButton", width=18)
         rename_btn.pack(side=tk.LEFT, padx=(0, 10))
 
-        # Secondary actions
-        self._create_button(action_inner, "👁 Перегляд",
+        # Secondary actions - outline buttons with icons
+        self._create_button(action_inner, "◉ Перегляд",
                            lambda: self._show_preview(self.files_state), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(action_inner, "↩️",
+        self._create_button(action_inner, "⎗",
                            lambda: self._undo(self.files_history, self._refresh_files), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(action_inner, "↪️",
+        self._create_button(action_inner, "⎘",
                            lambda: self._redo(self.files_history, self._refresh_files), "outline").pack(side=tk.LEFT, padx=2)
-        self._create_button(action_inner, "🔄",
+        self._create_button(action_inner, "⟳",
                            self._refresh_files, "outline").pack(side=tk.LEFT, padx=2)
 
         # Status on the right
