@@ -26,7 +26,6 @@ wheels/
 
 # PyInstaller
 *.manifest
-*.spec
 
 # Installer logs
 pip-log.txt
@@ -71,5 +70,5 @@ venv.bak/
 Thumbs.db
 
 # Project specific
-*.exe
 *.log
+upx/

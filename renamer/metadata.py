@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import os
+import platform
 import re
-from typing import Optional, Tuple
+from datetime import datetime
+from typing import Any, Dict, Optional, Tuple
 
 from PIL import Image, UnidentifiedImageError
 
@@ -18,10 +20,18 @@ from renamer.constants import (
 try:
     from mutagen import File as AudioFile
     from mutagen import MutagenError
+    from mutagen.easyid3 import EasyID3
+    from mutagen.id3 import ID3
+    from mutagen.flac import FLAC
+    from mutagen.mp4 import MP4
     MUTAGEN_AVAILABLE = True
 except ImportError:
     AudioFile = None  # type: ignore
     MutagenError = Exception  # type: ignore
+    EasyID3 = None  # type: ignore
+    ID3 = None  # type: ignore
+    FLAC = None  # type: ignore
+    MP4 = None  # type: ignore
     MUTAGEN_AVAILABLE = False
 
 
@@ -167,3 +177,156 @@ def format_audio_info(duration: Optional[float], bitrate: Optional[int]) -> str:
         parts.append(f"{bitrate // 1000}kbps")
 
     return " / ".join(parts)
+
+
+def get_audio_tags_extended(filepath: str) -> Dict[str, Any]:
+    """
+    Extract extended metadata from audio file.
+
+    Returns:
+        Dict with keys: artist, title, album, year, genre, track, duration, bitrate
+    """
+    result = {
+        "artist": None,
+        "title": None,
+        "album": None,
+        "year": None,
+        "genre": None,
+        "track": None,
+        "duration": None,
+        "bitrate": None,
+    }
+
+    if not MUTAGEN_AVAILABLE:
+        return result
+
+    try:
+        audio = AudioFile(filepath, easy=True)
+        if not audio:
+            return result
+
+        result["duration"] = audio.info.length if audio.info else None
+        result["bitrate"] = audio.info.bitrate if audio.info else None
+        result["artist"] = audio.get('artist', [None])[0]
+        result["title"] = audio.get('title', [None])[0]
+        result["album"] = audio.get('album', [None])[0]
+        result["genre"] = audio.get('genre', [None])[0]
+
+        # Year handling (can be 'date' or 'year')
+        year = audio.get('date', [None])[0] or audio.get('year', [None])[0]
+        if year:
+            # Extract just the year if it's a full date
+            year_match = re.match(r'(\d{4})', str(year))
+            result["year"] = year_match.group(1) if year_match else year
+
+        # Track number
+        track = audio.get('tracknumber', [None])[0]
+        if track:
+            # Handle "1/12" format
+            track_match = re.match(r'(\d+)', str(track))
+            result["track"] = track_match.group(1) if track_match else track
+
+        return result
+
+    except (MutagenError, FileNotFoundError, PermissionError, OSError):
+        return result
+
+
+def write_audio_tags(filepath: str, tags: Dict[str, Any]) -> bool:
+    """
+    Write metadata tags to audio file.
+
+    Args:
+        filepath: Path to audio file
+        tags: Dict with keys: artist, title, album, year, genre, track
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if not MUTAGEN_AVAILABLE:
+        return False
+
+    try:
+        audio = AudioFile(filepath, easy=True)
+        if not audio:
+            return False
+
+        # Map tag names
+        tag_map = {
+            'artist': 'artist',
+            'title': 'title',
+            'album': 'album',
+            'year': 'date',
+            'genre': 'genre',
+            'track': 'tracknumber',
+        }
+
+        for key, tag_name in tag_map.items():
+            if key in tags and tags[key] is not None:
+                value = str(tags[key])
+                if value:
+                    audio[tag_name] = value
+                elif tag_name in audio:
+                    del audio[tag_name]
+
+        audio.save()
+        return True
+
+    except (MutagenError, FileNotFoundError, PermissionError, OSError):
+        return False
+
+
+def get_file_dates(filepath: str) -> Tuple[Optional[datetime], Optional[datetime]]:
+    """
+    Get file creation and modification dates.
+
+    Args:
+        filepath: Path to file
+
+    Returns:
+        Tuple of (created_date, modified_date)
+    """
+    try:
+        stat = os.stat(filepath)
+
+        # Modification time is consistent across platforms
+        modified = datetime.fromtimestamp(stat.st_mtime)
+
+        # Creation time varies by platform
+        if platform.system() == 'Windows':
+            created = datetime.fromtimestamp(stat.st_ctime)
+        elif platform.system() == 'Darwin':  # macOS
+            created = datetime.fromtimestamp(stat.st_birthtime)
+        else:  # Linux - use ctime as fallback (not true creation time)
+            created = datetime.fromtimestamp(stat.st_ctime)
+
+        return created, modified
+
+    except (OSError, AttributeError):
+        return None, None
+
+
+def format_duration(seconds: Optional[float]) -> str:
+    """Format duration in seconds to mm:ss or hh:mm:ss."""
+    if seconds is None:
+        return ""
+
+    total_seconds = int(seconds)
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    secs = total_seconds % 60
+
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def format_file_size(size_bytes: int) -> str:
+    """Format file size to human readable string."""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    elif size_bytes < 1024 * 1024 * 1024:
+        return f"{size_bytes / 1024 / 1024:.1f} MB"
+    return f"{size_bytes / 1024 / 1024 / 1024:.2f} GB"

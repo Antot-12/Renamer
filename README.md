@@ -1,17 +1,16 @@
-# ✨ Перейменувач / Renamer
+# Renamer
 
-> Перетягни файли ➡️ обери шаблон ➡️ натисни 🚀 — готово!  
-> Drag & drop ➡️ choose template ➡️ press 🚀 — done!
+> Drag & drop files, choose a template, press Rename — done!
 
 ---
 
-## 📸 Приклад / Quick Look
+## Quick Look
 
-| Стара назва | ➡️ | Нова назва |
-|----------|----|----------|
-| `01‑Track.mp3` | | `Coldplay - Yellow.mp3` |
-| `IMG_20250728.jpg` | | `Відпустка в Іспанії.jpg` |
-| `report_final.pdf` | | `01 - report_final.pdf` |
+| Original Name | | New Name |
+|---------------|---|----------|
+| `01-Track.mp3` | → | `Coldplay - Yellow.mp3` |
+| `IMG_20250728.jpg` | → | `2024-07-28 - Vacation.jpg` |
+| `report_final.pdf` | → | `01 - report_final.pdf` |
 
 <br>
 
@@ -19,27 +18,51 @@
 
 ---
 
-## 🌟 Можливості / Features
+## Features
 
-- 🎧 **Розумні аудіо теги** — автоматично бере Виконавця і Назву з ID3 / FLAC / тощо
-- ✍️ **Шаблони** — `Виконавець - Назва`, `Назва (Виконавець)`, `## - Назва`, `ВЕЛИКІ ЛІТЕРИ`, `малі літери`
-- ✂️ **Префікс / суфікс + знайти/замінити** — швидке масове редагування
-- 🏷️ **Будь-які типи файлів**: аудіо, зображення, документи, відео, архіви, код, ігри, презентації
-- 🚚 **Переміщення або копіювання** — збережи оригінали
-- 🎯 **Цільова папка** — зберігай всі файли в одному місці
-- 🖱️ **Контекстне меню** — перейменуй окремий файл, видали, очисти список
-- 🔄 **Перетягування папок** — автоматичне сканування підпапок
-- ⚙️ **Сторінка налаштувань** — налаштуй під себе без постійних підтверджень
-- 🗒️ **Живий журнал** — бач що зроблено ✅ або що не вдалося ❌
-- 🌑 **Темна тема** з `ttkbootstrap`
-- 📦 **Портативний EXE** — просто запусти, Python не потрібен
+### Core Renaming
+- **Smart Audio Tags** — automatically extracts Artist, Title, Album, Year, Genre from ID3/FLAC/OGG/etc.
+- **Templates** — `Artist - Title`, `Title (Artist)`, `## - Title`, `Album - Title`, `[Year] Artist - Title`
+- **Prefix / Suffix** — add text before or after filenames
+- **Find & Replace** — with optional **Regex support**
+- **Case Transformations** — Title Case, UPPER, lower, Sentence case, camelCase, PascalCase, snake_case, kebab-case
+
+### Advanced Options
+- **Batch Numbering** — custom start number, step size, zero-padding
+- **Date in Filename** — add creation or modification date with custom format
+- **Remove Patterns** — brackets `()[]{}`, numbers, special characters
+- **Trim Spaces** — leading, trailing, or multiple spaces
+
+### File Management
+- **Sort Files** — by name, date, size, or type (click column headers)
+- **Filter by Type** — show only audio, images, documents, etc.
+- **Subfolder Support** — recursive scanning with checkbox
+- **Duplicate Detection** — find identical files by MD5 hash
+
+### Safety & History
+- **Undo/Redo** — revert rename operations instantly
+- **Preview** — see all changes before applying
+- **Backup Option** — copy originals to backup folder before renaming
+- **History Log** — persistent log of all operations with CSV export
+- **Profiles** — save and load your favorite rename configurations
+
+### Supported File Types
+Audio, Images, Documents, Video, Archives, Code, Games, Presentations, and more.
+
+### UI/UX
+- **Dark Theme** with cyan accents (ttkbootstrap)
+- **Drag & Drop** files and folders
+- **Collapsible Advanced Options** — clean interface with power features hidden until needed
+- **Context Menu** — right-click for quick actions
+- **Live Log** — see what's happening in real-time
+- **Portable EXE** — no Python installation required
 
 ---
 
-## 💻 Вимоги / Requirements
+## Requirements
 
-| Інструмент | Версія |
-|------------|--------|
+| Tool | Version |
+|------|---------|
 | Python | 3.9 - 3.12 |
 | Windows | 10 / 11 |
 | macOS | 10.15+ |
@@ -47,46 +70,46 @@
 
 ---
 
-## 🚀 Встановлення / Installation
+## Installation
 
-### Windows (найпростіший спосіб)
+### Windows (Easiest)
 
 ```powershell
-# 1) Клонуй репозиторій
+# 1) Clone the repository
 git clone https://github.com/Antot-12/Renamer.git
 cd Renamer
 
-# 2) Запусти install.bat (встановить залежності)
+# 2) Run install.bat (installs dependencies)
 install.bat
 
-# 3) Запусти програму
+# 3) Run the app
 run.bat
 ```
 
-### Windows / macOS / Linux (з venv)
+### Windows / macOS / Linux (with venv)
 
 ```bash
-# 1) Клонуй репозиторій
+# 1) Clone the repository
 git clone https://github.com/Antot-12/Renamer.git
 cd Renamer
 
-# 2) Створи віртуальне середовище
+# 2) Create virtual environment
 python -m venv .venv
 
-# 3) Активуй його
+# 3) Activate it
 # Windows:
 .venv\Scripts\activate
 # macOS/Linux:
 source .venv/bin/activate
 
-# 4) Встанови залежності
+# 4) Install dependencies
 pip install -r requirements.txt
 
-# 5) Запусти
+# 5) Run
 python run.py
 ```
 
-### Швидкий старт (без venv)
+### Quick Start (no venv)
 
 ```bash
 pip install mutagen Pillow tkinterdnd2 ttkbootstrap
@@ -95,50 +118,74 @@ python run.py
 
 ---
 
-## 📦 Створення EXE / Build EXE
+## Build Portable EXE (Windows)
+
+### Option 1: Using build script (Recommended)
+
+```batch
+build.bat
+```
+
+This creates a lightweight portable EXE (~15-20 MB) in the `dist/` folder.
+
+### Option 2: Manual build
 
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --windowed --icon=ico.ico --name=Renamer run.py
+pyinstaller --onefile --windowed --icon=ico.ico --name=Renamer --exclude-module numpy --exclude-module scipy --exclude-module pandas --exclude-module matplotlib run.py
 ```
 
-Готовий файл буде в папці `dist/Renamer.exe`
+The executable will be at `dist/Renamer.exe`
 
 ---
 
-## ⌨️ Гарячі клавіші / Hotkeys
+## Hotkeys
 
-| Клавіша | Дія |
-|---------|-----|
-| `Ctrl+A` | Вибрати все |
-| `Ctrl+D` | Зняти вибір |
-| `Delete` | Видалити вибране |
-| `Double-click` на "Нова назва" | Редагувати ім'я |
-| `Double-click` на зображенні | Перегляд |
+| Key | Action |
+|-----|--------|
+| `Ctrl+A` | Select all |
+| `Ctrl+D` | Deselect all |
+| `Ctrl+Z` | Undo |
+| `Ctrl+Y` | Redo |
+| `Delete` | Remove selected from list |
+| `Double-click` on "New Name" | Edit name manually |
+| `Double-click` on image | Preview |
 
 ---
 
-## 📁 Структура проекту / Project Structure
+## Project Structure
 
 ```
 Renamer/
-├── renamer/              # Головний пакет
+├── renamer/              # Main package
 │   ├── __init__.py
-│   ├── app.py           # GUI програми
-│   ├── constants.py     # Константи та налаштування
-│   ├── metadata.py      # Витягування метаданих
-│   └── file_ops.py      # Операції з файлами
-├── tests/               # Тести
-├── run.py              # Точка входу
-├── run.bat             # Запуск для Windows
-├── install.bat         # Встановлення для Windows
-├── requirements.txt    # Залежності
-└── pyproject.toml      # Конфігурація пакету
+│   ├── app.py            # GUI application
+│   ├── constants.py      # Constants and settings
+│   ├── metadata.py       # Metadata extraction
+│   ├── file_ops.py       # File operations
+│   ├── history.py        # Undo/Redo system
+│   ├── transformers.py   # Text transformations
+│   ├── duplicates.py     # Duplicate detection
+│   ├── history_log.py    # Persistent history
+│   └── profiles.py       # Profile management
+├── tests/                # Test suite (185 tests)
+│   ├── test_transformers.py
+│   ├── test_history.py
+│   ├── test_duplicates.py
+│   ├── test_history_log.py
+│   ├── test_profiles.py
+│   └── test_metadata.py
+├── run.py                # Entry point
+├── run.bat               # Windows launcher
+├── install.bat           # Windows installer
+├── build.bat             # Build portable EXE
+├── requirements.txt      # Dependencies
+└── pyproject.toml        # Package configuration
 ```
 
 ---
 
-## 🐛 Проблеми / Troubleshooting
+## Troubleshooting
 
 **ModuleNotFoundError: No module named 'tkinterdnd2'**
 ```bash
@@ -155,8 +202,22 @@ sudo apt install python3-tk
 brew install python-tk
 ```
 
+**EXE too large?**
+Use `build.bat` which excludes unnecessary modules. The resulting EXE should be ~15-20 MB.
+
 ---
 
-## 📜 Ліцензія / License
+## Running Tests
 
-MIT License - використовуй як хочеш!
+```bash
+pip install pytest
+pytest tests/ -v
+```
+
+All 185 tests should pass.
+
+---
+
+## License
+
+MIT License - use however you want!
