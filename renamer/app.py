@@ -344,7 +344,7 @@ class RenamerApp:
                  fg=COLORS["text_dim"], font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=8)
 
         # Treeview
-        self.music_tree = self._create_treeview(self.music_frame, self.music_state)
+        self.music_tree = self._create_treeview(self.music_frame, self.music_state, AUDIO, self._refresh_music)
 
         # Actions
         action_frame = tk.Frame(self.music_frame, bg=COLORS["bg_main"])
@@ -438,7 +438,7 @@ class RenamerApp:
                  fg=COLORS["text_dim"], font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=8)
 
         # Treeview
-        self.files_tree = self._create_treeview(self.files_frame, self.files_state)
+        self.files_tree = self._create_treeview(self.files_frame, self.files_state, SUPPORTED, self._refresh_files)
 
         # Actions
         action_frame = tk.Frame(self.files_frame, bg=COLORS["bg_main"])
@@ -449,7 +449,7 @@ class RenamerApp:
                            "success").pack(side=tk.LEFT, padx=(0, 10))
         self._create_button(action_frame, "🔄 Оновити", self._refresh_files, "outline").pack(side=tk.LEFT)
 
-    def _create_treeview(self, parent, state: AppState) -> ttk.Treeview:
+    def _create_treeview(self, parent, state: AppState, allowed_ext: tuple, refresh_fn) -> ttk.Treeview:
         """Створення таблиці файлів."""
         tree_frame = tk.Frame(parent, bg=COLORS["bg_main"])
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
@@ -474,8 +474,13 @@ class RenamerApp:
 
         tree.bind("<Button-1>", lambda e: self._on_tree_click(e, tree, state))
 
+        # Drag and drop support
         if self.dnd_enabled:
-            tree.drop_target_register(DND_FILES)
+            try:
+                tree.drop_target_register(DND_FILES)
+                tree.dnd_bind("<<Drop>>", lambda e: self._on_drop(e, state, tree, allowed_ext, refresh_fn))
+            except Exception:
+                pass
 
         return tree
 
@@ -570,6 +575,27 @@ class RenamerApp:
         self.status_var.set("✅ Налаштування скинуто")
 
     # ========== File Operations ==========
+
+    def _on_drop(self, event, state: AppState, tree: ttk.Treeview, allowed_ext: tuple, refresh_fn) -> None:
+        """Обробка drag & drop."""
+        try:
+            # Parse dropped files - handle both formats
+            data = event.data
+            if data.startswith("{"):
+                # Windows format with braces
+                paths = []
+                for item in data.split("} {"):
+                    item = item.strip("{}")
+                    if item:
+                        paths.append(item)
+            else:
+                # Unix format or simple paths
+                paths = self.root.tk.splitlist(data)
+
+            if paths:
+                self._process_paths(list(paths), state, tree, allowed_ext, refresh_fn)
+        except Exception as e:
+            self.status_var.set(f"❌ Помилка drag & drop: {e}")
 
     def _get_file_type(self, ext: str) -> str:
         if ext in AUDIO: return "🎵"
