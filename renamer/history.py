@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import List, Optional, Callable
 import threading
 
@@ -44,11 +46,58 @@ class RenameOperation:
 class OperationHistory:
     """Manages undo/redo stack for rename operations."""
 
-    def __init__(self, max_size: int = 50):
+    DEFAULT_HISTORY_FILE = Path.home() / ".renamer_undo_history.json"
+
+    def __init__(self, max_size: int = 50, persist: bool = True, filepath: Optional[Path] = None):
         self._undo_stack: List[List[RenameOperation]] = []
         self._redo_stack: List[List[RenameOperation]] = []
         self._max_size = max_size
         self._lock = threading.Lock()
+        self._persist = persist
+        self._filepath = filepath or self.DEFAULT_HISTORY_FILE
+
+        if persist:
+            self._load()
+
+    def _load(self) -> None:
+        """Load history from file."""
+        try:
+            if self._filepath.exists():
+                with open(self._filepath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+
+                self._undo_stack = [
+                    [RenameOperation.from_dict(op) for op in batch]
+                    for batch in data.get("undo_stack", [])
+                ]
+                self._redo_stack = [
+                    [RenameOperation.from_dict(op) for op in batch]
+                    for batch in data.get("redo_stack", [])
+                ]
+        except (json.JSONDecodeError, IOError, KeyError):
+            self._undo_stack = []
+            self._redo_stack = []
+
+    def _save(self) -> None:
+        """Save history to file."""
+        if not self._persist:
+            return
+
+        try:
+            data = {
+                "undo_stack": [
+                    [op.to_dict() for op in batch]
+                    for batch in self._undo_stack
+                ],
+                "redo_stack": [
+                    [op.to_dict() for op in batch]
+                    for batch in self._redo_stack
+                ],
+            }
+            with open(self._filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except IOError:
+            pass
 
     def record_batch(self, operations: List[RenameOperation]) -> None:
         """Record a batch of operations (one rename action may affect multiple files)."""
@@ -62,6 +111,8 @@ class OperationHistory:
             # Limit stack size
             while len(self._undo_stack) > self._max_size:
                 self._undo_stack.pop(0)
+
+            self._save()
 
     def undo(self, on_progress: Optional[Callable[[str], None]] = None) -> bool:
         """
@@ -102,6 +153,7 @@ class OperationHistory:
         with self._lock:
             if successful_ops:
                 self._redo_stack.append(successful_ops)
+            self._save()
 
         return len(errors) == 0
 
@@ -143,6 +195,7 @@ class OperationHistory:
         with self._lock:
             if successful_ops:
                 self._undo_stack.append(successful_ops)
+            self._save()
 
         return len(errors) == 0
 
@@ -179,6 +232,7 @@ class OperationHistory:
         with self._lock:
             self._undo_stack.clear()
             self._redo_stack.clear()
+            self._save()
 
     def get_undo_count(self) -> int:
         """Get number of undo operations available."""

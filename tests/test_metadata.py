@@ -13,6 +13,7 @@ from renamer.metadata import (
     get_image_dimensions,
     extract_metadata,
     format_audio_info,
+    get_album_art,
 )
 
 
@@ -207,3 +208,28 @@ class TestExtractMetadata:
             assert size > 0
 
             os.unlink(f.name)
+
+
+class TestGetAlbumArt:
+    """Tests for get_album_art function."""
+
+    def test_returns_none_for_nonexistent_file(self):
+        """Should return None for nonexistent file."""
+        result = get_album_art('/nonexistent/file.mp3')
+        assert result is None
+
+    def test_returns_none_for_non_audio_file(self):
+        """Should return None for non-audio file."""
+        with tempfile.NamedTemporaryFile(suffix='.txt', delete=False) as f:
+            f.write(b'test content')
+            f.flush()
+
+            result = get_album_art(f.name)
+
+            assert result is None
+            os.unlink(f.name)
+
+    def test_returns_none_for_audio_without_art(self):
+        """Should return None when audio has no embedded art."""
+        result = get_album_art('/nonexistent/file.mp3')
+        assert result is None

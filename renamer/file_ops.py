@@ -272,6 +272,52 @@ def check_for_duplicate_destinations(
     return False
 
 
+def find_destination_conflicts(
+    entries: List[FileEntry],
+    target_dir: Optional[str] = None
+) -> Dict[str, List[FileEntry]]:
+    """
+    Find all destination conflicts among selected entries.
+
+    Args:
+        entries: List of file entries
+        target_dir: Optional override target directory
+
+    Returns:
+        Dict mapping destination path to list of conflicting entries
+    """
+    dest_entries: Dict[str, List[FileEntry]] = {}
+
+    for entry in entries:
+        if not entry.selected.get():
+            continue
+        dest = target_dir or entry.directory
+        full_dest = os.path.join(dest, entry.new_name.lower())
+
+        if full_dest not in dest_entries:
+            dest_entries[full_dest] = []
+        dest_entries[full_dest].append(entry)
+
+    return {dest: entries for dest, entries in dest_entries.items() if len(entries) > 1}
+
+
+def resolve_conflicts_auto_number(
+    conflicts: Dict[str, List[FileEntry]],
+    padding: int = 2
+) -> None:
+    """
+    Automatically resolve conflicts by adding numbers to duplicate names.
+
+    Args:
+        conflicts: Dict from find_destination_conflicts
+        padding: Number of digits for padding (e.g., 2 = 01, 02)
+    """
+    for dest_path, conflict_entries in conflicts.items():
+        for i, entry in enumerate(conflict_entries[1:], start=2):
+            base, ext = os.path.splitext(entry.new_name)
+            entry.new_name = f"{base} ({i:0{padding}d}){ext}"
+
+
 class FileOperationWorker:
     """Threaded worker for file operations to prevent UI freezing."""
 

@@ -9,7 +9,7 @@ import platform
 import re
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-from typing import List, Optional
+from typing import Dict, List, Optional
 from pathlib import Path
 
 # Try to import drag-and-drop support (may not work on all platforms)
@@ -29,11 +29,12 @@ from renamer.constants import (
 )
 from renamer.metadata import (
     sanitize, bytes_to_human_readable, extract_metadata,
-    get_audio_tags_extended, get_file_dates,
+    get_audio_tags_extended, get_file_dates, get_album_art,
 )
 from renamer.file_ops import (
     FileEntry, AppState, collect_files,
     check_for_duplicate_destinations, FileOperationWorker,
+    find_destination_conflicts, resolve_conflicts_auto_number,
 )
 from renamer.history import OperationHistory, RenameOperation
 from renamer.transformers import (
@@ -42,6 +43,7 @@ from renamer.transformers import (
 )
 from renamer.duplicates import find_duplicates, get_duplicate_stats
 from renamer.history_log import get_history_log
+from renamer.musicbrainz import search_by_filename, search_recording
 from renamer.profiles import get_profile_manager, RenameProfile
 
 # Enable DPI awareness on Windows
@@ -107,6 +109,12 @@ class Settings:
         "default_mode": "move",
         "ask_metadata_audio": False,
         "use_original_name_fallback": True,
+        # Window geometry
+        "window_width": 1280,
+        "window_height": 850,
+        "window_x": None,
+        "window_y": None,
+        "window_maximized": False,
     }
 
     def __init__(self, config_path: Optional[Path] = None):
@@ -175,14 +183,23 @@ class RenamerApp:
         self._operation_worker: Optional[FileOperationWorker] = None
 
         # New: undo/redo history
-        self.music_history = OperationHistory()
-        self.files_history = OperationHistory()
+        self.music_history = OperationHistory(filepath=Path.home() / ".renamer_music_history.json")
+        self.files_history = OperationHistory(filepath=Path.home() / ".renamer_files_history.json")
 
         # New: profile manager
         self.profile_manager = get_profile_manager()
 
         # New: history log
         self.history_log = get_history_log()
+
+        # Debounce timers for live preview
+        self._music_preview_timer = None
+        self._files_preview_timer = None
+        self._drag_data = {"item": None, "start_y": 0}
+
+        # Search filter text
+        self._music_search_var = None
+        self._files_search_var = None
 
         self._setup_root()
         self._setup_variables()
@@ -191,6 +208,9 @@ class RenamerApp:
         self._setup_music_page()
         self._setup_files_page()
         self._setup_settings_page()
+
+        # Setup live preview bindings
+        self._setup_live_preview()
 
         # Load profiles
         self._update_profile_combos()
@@ -209,16 +229,75 @@ class RenamerApp:
             self.dnd_enabled = False
 
         self.root.title("Перейменувач файлів")
-        self.root.geometry("1280x850")
+
+        # Restore window geometry from settings
+        width = self.settings.get("window_width", 1280)
+        height = self.settings.get("window_height", 850)
+        x = self.settings.get("window_x")
+        y = self.settings.get("window_y")
+
+        if x is not None and y is not None:
+            self.root.geometry(f"{width}x{height}+{x}+{y}")
+        else:
+            self.root.geometry(f"{width}x{height}")
+
+        if self.settings.get("window_maximized", False):
+            self.root.state('zoomed') if platform.system() == 'Windows' else self.root.attributes('-zoomed', True)
+
         self.root.minsize(1000, 700)
         self.root.configure(bg=COLORS["bg_main"])
+
+        # Save geometry on close
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Initialize ttkbootstrap
         self.style = tb.Style("darkly")
 
+    def _on_close(self) -> None:
+        """Save window geometry and close."""
+        try:
+            # Check if maximized
+            is_maximized = self.root.state() == 'zoomed' if platform.system() == 'Windows' else bool(self.root.attributes('-zoomed'))
+            self.settings.set("window_maximized", is_maximized)
+
+            if not is_maximized:
+                # Save geometry only if not maximized
+                geo = self.root.geometry()
+                # Parse geometry string: WxH+X+Y
+                import re
+                match = re.match(r'(\d+)x(\d+)\+(-?\d+)\+(-?\d+)', geo)
+                if match:
+                    self.settings.settings["window_width"] = int(match.group(1))
+                    self.settings.settings["window_height"] = int(match.group(2))
+                    self.settings.settings["window_x"] = int(match.group(3))
+                    self.settings.settings["window_y"] = int(match.group(4))
+                    self.settings.save()
+        except Exception:
+            pass
+
+        self.root.destroy()
+
     def _configure_styles(self) -> None:
         """Налаштування стилів."""
         s = self.style
+
+        # Custom cyan button style
+        s.configure("Cyan.TButton",
+                    background=COLORS["cyan"],
+                    foreground="#000000",
+                    font=("Segoe UI", 10))
+        s.map("Cyan.TButton",
+              background=[("active", COLORS["cyan_dark"]), ("pressed", COLORS["cyan_dim"])],
+              foreground=[("active", "#000000"), ("pressed", "#000000")])
+
+        # Cyan outline button
+        s.configure("CyanOutline.TButton",
+                    background=COLORS["bg_secondary"],
+                    foreground=COLORS["cyan"],
+                    font=("Segoe UI", 10))
+        s.map("CyanOutline.TButton",
+              background=[("active", COLORS["bg_hover"])],
+              foreground=[("active", COLORS["cyan"])])
 
         # Notebook tabs
         s.configure("TNotebook", background=COLORS["bg_main"])
@@ -345,16 +424,14 @@ class RenamerApp:
         self.notebook.add(self.settings_frame, text="  ⚙️ Налаштування  ")
 
     def _create_button(self, parent, text: str, command, style: str = "primary") -> tb.Button:
-        """Створити кнопку."""
-        # All main buttons use cyan (info), only delete uses danger
-        style_map = {
-            "primary": "info",
-            "secondary": "info-outline",
-            "success": "info",  # Cyan instead of green
-            "danger": "danger",
-            "outline": "info-outline",
-        }
-        return tb.Button(parent, text=text, command=command, bootstyle=style_map.get(style, "info"))
+        """Створити кнопку з cyan/teal кольором."""
+        if style == "danger":
+            return tb.Button(parent, text=text, command=command, bootstyle="danger")
+        elif style == "outline" or style == "secondary":
+            return tb.Button(parent, text=text, command=command, bootstyle="success-outline")
+        else:
+            # Primary buttons - use success (teal/cyan-ish)
+            return tb.Button(parent, text=text, command=command, bootstyle="success")
 
     def _setup_music_page(self) -> None:
         """Сторінка для музичних файлів - user-friendly layout."""
@@ -380,7 +457,7 @@ class RenamerApp:
         tk.Label(drop_inner, text="🎵", font=("Segoe UI", 32),
                  bg=COLORS["bg_secondary"], fg=COLORS["cyan"]).pack()
         tk.Label(drop_inner, text="Перетягніть музичні файли сюди",
-                 font=("Segoe UI", 11), bg=COLORS["bg_secondary"], fg=COLORS["text"]).pack(pady=(5, 0))
+                 font=("Segoe UI", 11), bg=COLORS["bg_secondary"], fg=COLORS["cyan"]).pack(pady=(5, 0))
         tk.Label(drop_inner, text="або використовуйте кнопки нижче",
                  font=("Segoe UI", 9), bg=COLORS["bg_secondary"], fg=COLORS["text_dim"]).pack()
 
@@ -396,31 +473,31 @@ class RenamerApp:
                            "primary").pack(side=tk.LEFT, padx=5)
 
         # Right: Stats & Quick Actions
-        right_panel = tk.Frame(top_section, bg=COLORS["bg_main"], width=220)
-        right_panel.pack(side=tk.RIGHT, fill=tk.Y)
-        right_panel.pack_propagate(False)
+        right_panel = tk.Frame(top_section, bg=COLORS["bg_main"])
+        right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
 
         # File counter - big and prominent
         tk.Label(right_panel, text="Файлів:", font=("Segoe UI", 10),
-                 bg=COLORS["bg_main"], fg=COLORS["text_dim"]).pack(anchor="w")
+                 bg=COLORS["bg_main"], fg=COLORS["cyan"]).pack(anchor="e")
         tk.Label(right_panel, textvariable=self.music_count_var, font=("Segoe UI", 24, "bold"),
-                 bg=COLORS["bg_main"], fg=COLORS["cyan"]).pack(anchor="w", pady=(0, 10))
+                 bg=COLORS["bg_main"], fg=COLORS["cyan"]).pack(anchor="e", pady=(0, 10))
 
-        # Quick action buttons
-        quick_btns = tk.Frame(right_panel, bg=COLORS["bg_main"])
-        quick_btns.pack(fill=tk.X)
-
-        btn_grid = tk.Frame(quick_btns, bg=COLORS["bg_main"])
+        # Quick action buttons - 2x2 grid
+        btn_grid = tk.Frame(right_panel, bg=COLORS["bg_main"])
         btn_grid.pack()
 
-        self._create_button(btn_grid, "✓ Все", lambda: self._select_all_in(self.music_state, self.music_tree),
-                           "outline").grid(row=0, column=0, padx=2, pady=2)
-        self._create_button(btn_grid, "✗ Нічого", lambda: self._deselect_all_in(self.music_state, self.music_tree),
-                           "outline").grid(row=0, column=1, padx=2, pady=2)
-        self._create_button(btn_grid, "🔍 Дублікати", lambda: self._find_duplicates(self.music_state, self.music_tree),
-                           "outline").grid(row=1, column=0, padx=2, pady=2)
-        self._create_button(btn_grid, "🗑 Очистити", lambda: self._clear_all_in(self.music_state, self.music_tree),
-                           "danger").grid(row=1, column=1, padx=2, pady=2)
+        tb.Button(btn_grid, text="✓ Все", width=6,
+                  command=lambda: self._select_all_in(self.music_state, self.music_tree),
+                  bootstyle="success-outline").grid(row=0, column=0, padx=1, pady=1, sticky="ew")
+        tb.Button(btn_grid, text="✗ Ні", width=6,
+                  command=lambda: self._deselect_all_in(self.music_state, self.music_tree),
+                  bootstyle="success-outline").grid(row=0, column=1, padx=1, pady=1, sticky="ew")
+        tb.Button(btn_grid, text="Дубл", width=6,
+                  command=lambda: self._find_duplicates(self.music_state, self.music_tree),
+                  bootstyle="success-outline").grid(row=1, column=0, padx=1, pady=1, sticky="ew")
+        tb.Button(btn_grid, text="Очист", width=6,
+                  command=lambda: self._clear_all_in(self.music_state, self.music_tree),
+                  bootstyle="danger-outline").grid(row=1, column=1, padx=1, pady=1, sticky="ew")
 
         # ===== MAIN TEMPLATE SECTION =====
         tmpl_frame = tk.LabelFrame(self.music_frame, text=" 📝 Налаштування перейменування ",
@@ -434,14 +511,14 @@ class RenamerApp:
         row1 = tk.Frame(inner, bg=COLORS["bg_main"])
         row1.pack(fill=tk.X, pady=(0, 10))
 
-        tk.Label(row1, text="🎯 Шаблон:", bg=COLORS["bg_main"], fg=COLORS["text"],
+        tk.Label(row1, text="🎯 Шаблон:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
                  font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
         music_combo = ttk.Combobox(row1, textvariable=self.music_tmpl_var,
                                     values=list(self.AUDIO_TEMPLATES.keys()), width=24, state="readonly")
         music_combo.pack(side=tk.LEFT, padx=(8, 20))
         music_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_music())
 
-        tk.Label(row1, text="💾 Профіль:", bg=COLORS["bg_main"], fg=COLORS["text"],
+        tk.Label(row1, text="💾 Профіль:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
                  font=("Segoe UI", 10)).pack(side=tk.LEFT)
         self.music_profile_combo = ttk.Combobox(row1, textvariable=self.music_profile_var,
                                                  values=[], width=14, state="readonly")
@@ -450,6 +527,8 @@ class RenamerApp:
 
         self._create_button(row1, "💾", lambda: self._save_profile_music(), "outline").pack(side=tk.LEFT, padx=2)
         self._create_button(row1, "🗑", lambda: self._delete_profile_music(), "outline").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "📤", lambda: self._export_profile("audio"), "outline").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "📥", lambda: self._import_profile("audio"), "outline").pack(side=tk.LEFT, padx=2)
 
         # Separator
         ttk.Separator(inner, orient="horizontal").pack(fill=tk.X, pady=8)
@@ -462,11 +541,11 @@ class RenamerApp:
         col1 = tk.Frame(row2, bg=COLORS["bg_main"])
         col1.pack(side=tk.LEFT, padx=(0, 30))
 
-        tk.Label(col1, text="Префікс:", bg=COLORS["bg_main"], fg=COLORS["text"],
+        tk.Label(col1, text="Префікс:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
                  font=("Segoe UI", 9)).grid(row=0, column=0, sticky="e", padx=(0, 5))
         ttk.Entry(col1, textvariable=self.music_pre_var, width=14).grid(row=0, column=1)
 
-        tk.Label(col1, text="Суфікс:", bg=COLORS["bg_main"], fg=COLORS["text"],
+        tk.Label(col1, text="Суфікс:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
                  font=("Segoe UI", 9)).grid(row=1, column=0, sticky="e", padx=(0, 5), pady=(5, 0))
         ttk.Entry(col1, textvariable=self.music_suf_var, width=14).grid(row=1, column=1, pady=(5, 0))
 
@@ -474,11 +553,11 @@ class RenamerApp:
         col2 = tk.Frame(row2, bg=COLORS["bg_main"])
         col2.pack(side=tk.LEFT, padx=(0, 30))
 
-        tk.Label(col2, text="Знайти:", bg=COLORS["bg_main"], fg=COLORS["text"],
+        tk.Label(col2, text="Знайти:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
                  font=("Segoe UI", 9)).grid(row=0, column=0, sticky="e", padx=(0, 5))
         ttk.Entry(col2, textvariable=self.music_find_var, width=14).grid(row=0, column=1)
 
-        tk.Label(col2, text="Замінити:", bg=COLORS["bg_main"], fg=COLORS["text"],
+        tk.Label(col2, text="Замінити:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
                  font=("Segoe UI", 9)).grid(row=1, column=0, sticky="e", padx=(0, 5), pady=(5, 0))
         ttk.Entry(col2, textvariable=self.music_repl_var, width=14).grid(row=1, column=1, pady=(5, 0))
 
@@ -487,9 +566,9 @@ class RenamerApp:
         col3.pack(side=tk.LEFT)
 
         tb.Checkbutton(col3, text="Regex", variable=self.music_regex_var,
-                       bootstyle="round-toggle").pack(anchor="w")
+                       bootstyle="success").pack(anchor="w")
         tb.Checkbutton(col3, text="Trim пробіли", variable=self.music_trim_var,
-                       bootstyle="round-toggle").pack(anchor="w", pady=(5, 0))
+                       bootstyle="success").pack(anchor="w", pady=(5, 0))
 
         # ===== ADVANCED OPTIONS (Collapsible) =====
         self.music_adv_visible = tk.BooleanVar(value=False)
@@ -522,27 +601,27 @@ class RenamerApp:
 
         # Numbering
         num_frame = tk.LabelFrame(adv_row, text="Нумерація", bg=COLORS["bg_secondary"],
-                                   fg=COLORS["text"], font=("Segoe UI", 9))
+                                   fg=COLORS["cyan"], font=("Segoe UI", 9))
         num_frame.pack(side=tk.LEFT, padx=(0, 15))
         num_inner = tk.Frame(num_frame, bg=COLORS["bg_secondary"])
         num_inner.pack(padx=8, pady=5)
 
-        tk.Label(num_inner, text="Старт:", bg=COLORS["bg_secondary"], fg=COLORS["text"],
+        tk.Label(num_inner, text="Старт:", bg=COLORS["bg_secondary"], fg=COLORS["cyan"],
                  font=("Segoe UI", 8)).grid(row=0, column=0)
         ttk.Spinbox(num_inner, textvariable=self.music_num_start_var, from_=0, to=9999,
                     width=4).grid(row=0, column=1, padx=2)
-        tk.Label(num_inner, text="Крок:", bg=COLORS["bg_secondary"], fg=COLORS["text"],
+        tk.Label(num_inner, text="Крок:", bg=COLORS["bg_secondary"], fg=COLORS["cyan"],
                  font=("Segoe UI", 8)).grid(row=0, column=2, padx=(5, 0))
         ttk.Spinbox(num_inner, textvariable=self.music_num_step_var, from_=1, to=100,
                     width=3).grid(row=0, column=3, padx=2)
-        tk.Label(num_inner, text="Цифри:", bg=COLORS["bg_secondary"], fg=COLORS["text"],
+        tk.Label(num_inner, text="Цифри:", bg=COLORS["bg_secondary"], fg=COLORS["cyan"],
                  font=("Segoe UI", 8)).grid(row=0, column=4, padx=(5, 0))
         ttk.Spinbox(num_inner, textvariable=self.music_num_padding_var, from_=1, to=5,
                     width=3).grid(row=0, column=5, padx=2)
 
         # Date
         date_frame = tk.LabelFrame(adv_row, text="Додати дату", bg=COLORS["bg_secondary"],
-                                    fg=COLORS["text"], font=("Segoe UI", 9))
+                                    fg=COLORS["cyan"], font=("Segoe UI", 9))
         date_frame.pack(side=tk.LEFT, padx=(0, 15))
         date_inner = tk.Frame(date_frame, bg=COLORS["bg_secondary"])
         date_inner.pack(padx=8, pady=5)
@@ -554,14 +633,14 @@ class RenamerApp:
 
         # Remove pattern
         remove_frame = tk.LabelFrame(adv_row, text="Видалити", bg=COLORS["bg_secondary"],
-                                      fg=COLORS["text"], font=("Segoe UI", 9))
+                                      fg=COLORS["cyan"], font=("Segoe UI", 9))
         remove_frame.pack(side=tk.LEFT, padx=(0, 15))
         ttk.Combobox(remove_frame, textvariable=self.music_remove_var,
                      values=list(PATTERN_LABELS.keys()), width=13, state="readonly").pack(padx=8, pady=5)
 
         # Case
         case_frame = tk.LabelFrame(adv_row, text="Регістр", bg=COLORS["bg_secondary"],
-                                    fg=COLORS["text"], font=("Segoe UI", 9))
+                                    fg=COLORS["cyan"], font=("Segoe UI", 9))
         case_frame.pack(side=tk.LEFT)
         ttk.Combobox(case_frame, textvariable=self.music_case_var,
                      values=list(CASE_LABELS.keys()), width=11, state="readonly").pack(padx=8, pady=5)
@@ -571,10 +650,10 @@ class RenamerApp:
         adv_row2.pack(fill=tk.X, pady=(10, 0))
 
         tb.Checkbutton(adv_row2, text="📋 Копіювати (не переміщувати)", variable=self.music_copy_var,
-                       bootstyle="round-toggle").pack(side=tk.LEFT, padx=(0, 20))
+                       bootstyle="success").pack(side=tk.LEFT, padx=(0, 20))
 
         tb.Checkbutton(adv_row2, text="💾 Backup оригіналів", variable=self.music_backup_var,
-                       bootstyle="round-toggle").pack(side=tk.LEFT, padx=(0, 5))
+                       bootstyle="success").pack(side=tk.LEFT, padx=(0, 5))
         self._create_button(adv_row2, "📂", lambda: self._choose_backup_dir(self.music_backup_dir_var),
                            "outline").pack(side=tk.LEFT, padx=(0, 20))
 
@@ -587,46 +666,59 @@ class RenamerApp:
         adv_row3 = tk.Frame(adv_inner, bg=COLORS["bg_secondary"])
         adv_row3.pack(fill=tk.X, pady=(10, 0))
 
-        tk.Label(adv_row3, text="Фільтр:", bg=COLORS["bg_secondary"], fg=COLORS["text"],
+        tk.Label(adv_row3, text="Фільтр:", bg=COLORS["bg_secondary"], fg=COLORS["cyan"],
                  font=("Segoe UI", 9)).pack(side=tk.LEFT)
         ttk.Combobox(adv_row3, textvariable=self.music_filter_var,
                      values=["Всі", ".mp3", ".flac", ".wav", ".ogg", ".m4a"],
                      width=8, state="readonly").pack(side=tk.LEFT, padx=(5, 15))
 
         tb.Checkbutton(adv_row3, text="Включати підпапки", variable=self.music_recursive_var,
-                       bootstyle="round-toggle").pack(side=tk.LEFT)
+                       bootstyle="success").pack(side=tk.LEFT)
 
-        # ===== FILE LIST =====
-        self.music_tree = self._create_treeview(self.music_frame, self.music_state, AUDIO, self._refresh_music, is_music=True)
-
-        # ===== ACTION BAR (Bottom) =====
+        # ===== ACTION BAR (Bottom) - pack BEFORE treeview =====
         action_frame = tk.Frame(self.music_frame, bg=COLORS["bg_secondary"])
         action_frame.pack(fill=tk.X, side=tk.BOTTOM)
 
         action_inner = tk.Frame(action_frame, bg=COLORS["bg_secondary"])
-        action_inner.pack(pady=12)
+        action_inner.pack(pady=10)
 
         # Main action button - larger and more prominent
         rename_btn = tb.Button(action_inner, text="🚀 ПЕРЕЙМЕНУВАТИ",
                                command=lambda: self._rename_selected(self.music_state, self.music_tree, self.music_copy_var,
                                                          self._refresh_music, self.music_history,
                                                          self.music_backup_var, self.music_backup_dir_var),
-                               bootstyle="info", width=20)
-        rename_btn.pack(side=tk.LEFT, padx=(0, 15))
+                               bootstyle="success", width=18)
+        rename_btn.pack(side=tk.LEFT, padx=(0, 10))
 
         # Secondary actions
         self._create_button(action_inner, "👁 Перегляд",
-                           lambda: self._show_preview(self.music_state), "outline").pack(side=tk.LEFT, padx=3)
+                           lambda: self._show_preview(self.music_state), "outline").pack(side=tk.LEFT, padx=2)
         self._create_button(action_inner, "↩️",
-                           lambda: self._undo(self.music_history, self._refresh_music), "outline").pack(side=tk.LEFT, padx=3)
+                           lambda: self._undo(self.music_history, self._refresh_music), "outline").pack(side=tk.LEFT, padx=2)
         self._create_button(action_inner, "↪️",
-                           lambda: self._redo(self.music_history, self._refresh_music), "outline").pack(side=tk.LEFT, padx=3)
+                           lambda: self._redo(self.music_history, self._refresh_music), "outline").pack(side=tk.LEFT, padx=2)
         self._create_button(action_inner, "🔄",
-                           self._refresh_music, "outline").pack(side=tk.LEFT, padx=3)
+                           self._refresh_music, "outline").pack(side=tk.LEFT, padx=2)
 
         # Status on the right
         tk.Label(action_frame, textvariable=self.status_var, bg=COLORS["bg_secondary"],
-                 fg=COLORS["text_secondary"], font=("Segoe UI", 9)).pack(side=tk.RIGHT, padx=15)
+                 fg=COLORS["cyan"], font=("Segoe UI", 9)).pack(side=tk.RIGHT, padx=15)
+
+        # ===== SEARCH BAR =====
+        search_frame = tk.Frame(self.music_frame, bg=COLORS["bg_main"])
+        search_frame.pack(fill=tk.X, padx=15, pady=(5, 0))
+
+        tk.Label(search_frame, text="🔍", bg=COLORS["bg_main"], fg=COLORS["cyan"],
+                 font=("Segoe UI", 10)).pack(side=tk.LEFT)
+        self._music_search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_frame, textvariable=self._music_search_var, width=30)
+        search_entry.pack(side=tk.LEFT, padx=5)
+        search_entry.bind("<KeyRelease>", lambda e: self._filter_music_list())
+        tb.Button(search_frame, text="✗", width=3, bootstyle="secondary-outline",
+                  command=lambda: (self._music_search_var.set(""), self._filter_music_list())).pack(side=tk.LEFT)
+
+        # ===== FILE LIST =====
+        self.music_tree = self._create_treeview(self.music_frame, self.music_state, AUDIO, self._refresh_music, is_music=True)
 
     def _setup_files_page(self) -> None:
         """Сторінка для загальних файлів - user-friendly layout."""
@@ -652,7 +744,7 @@ class RenamerApp:
         tk.Label(drop_inner, text="📁", font=("Segoe UI", 32),
                  bg=COLORS["bg_secondary"], fg=COLORS["cyan"]).pack()
         tk.Label(drop_inner, text="Перетягніть файли сюди",
-                 font=("Segoe UI", 11), bg=COLORS["bg_secondary"], fg=COLORS["text"]).pack(pady=(5, 0))
+                 font=("Segoe UI", 11), bg=COLORS["bg_secondary"], fg=COLORS["cyan"]).pack(pady=(5, 0))
         tk.Label(drop_inner, text="або використовуйте кнопки нижче",
                  font=("Segoe UI", 9), bg=COLORS["bg_secondary"], fg=COLORS["text_dim"]).pack()
 
@@ -668,31 +760,31 @@ class RenamerApp:
                            "primary").pack(side=tk.LEFT, padx=5)
 
         # Right: Stats & Quick Actions
-        right_panel = tk.Frame(top_section, bg=COLORS["bg_main"], width=220)
-        right_panel.pack(side=tk.RIGHT, fill=tk.Y)
-        right_panel.pack_propagate(False)
+        right_panel = tk.Frame(top_section, bg=COLORS["bg_main"])
+        right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
 
         # File counter - big and prominent
         tk.Label(right_panel, text="Файлів:", font=("Segoe UI", 10),
-                 bg=COLORS["bg_main"], fg=COLORS["text_dim"]).pack(anchor="w")
+                 bg=COLORS["bg_main"], fg=COLORS["cyan"]).pack(anchor="e")
         tk.Label(right_panel, textvariable=self.files_count_var, font=("Segoe UI", 24, "bold"),
-                 bg=COLORS["bg_main"], fg=COLORS["cyan"]).pack(anchor="w", pady=(0, 10))
+                 bg=COLORS["bg_main"], fg=COLORS["cyan"]).pack(anchor="e", pady=(0, 10))
 
-        # Quick action buttons
-        quick_btns = tk.Frame(right_panel, bg=COLORS["bg_main"])
-        quick_btns.pack(fill=tk.X)
-
-        btn_grid = tk.Frame(quick_btns, bg=COLORS["bg_main"])
+        # Quick action buttons - 2x2 grid
+        btn_grid = tk.Frame(right_panel, bg=COLORS["bg_main"])
         btn_grid.pack()
 
-        self._create_button(btn_grid, "✓ Все", lambda: self._select_all_in(self.files_state, self.files_tree),
-                           "outline").grid(row=0, column=0, padx=2, pady=2)
-        self._create_button(btn_grid, "✗ Нічого", lambda: self._deselect_all_in(self.files_state, self.files_tree),
-                           "outline").grid(row=0, column=1, padx=2, pady=2)
-        self._create_button(btn_grid, "🔍 Дублікати", lambda: self._find_duplicates(self.files_state, self.files_tree),
-                           "outline").grid(row=1, column=0, padx=2, pady=2)
-        self._create_button(btn_grid, "🗑 Очистити", lambda: self._clear_all_in(self.files_state, self.files_tree),
-                           "danger").grid(row=1, column=1, padx=2, pady=2)
+        tb.Button(btn_grid, text="✓ Все", width=6,
+                  command=lambda: self._select_all_in(self.files_state, self.files_tree),
+                  bootstyle="success-outline").grid(row=0, column=0, padx=1, pady=1, sticky="ew")
+        tb.Button(btn_grid, text="✗ Ні", width=6,
+                  command=lambda: self._deselect_all_in(self.files_state, self.files_tree),
+                  bootstyle="success-outline").grid(row=0, column=1, padx=1, pady=1, sticky="ew")
+        tb.Button(btn_grid, text="Дубл", width=6,
+                  command=lambda: self._find_duplicates(self.files_state, self.files_tree),
+                  bootstyle="success-outline").grid(row=1, column=0, padx=1, pady=1, sticky="ew")
+        tb.Button(btn_grid, text="Очист", width=6,
+                  command=lambda: self._clear_all_in(self.files_state, self.files_tree),
+                  bootstyle="danger-outline").grid(row=1, column=1, padx=1, pady=1, sticky="ew")
 
         # ===== MAIN TEMPLATE SECTION =====
         tmpl_frame = tk.LabelFrame(self.files_frame, text=" 📝 Налаштування перейменування ",
@@ -706,14 +798,14 @@ class RenamerApp:
         row1 = tk.Frame(inner, bg=COLORS["bg_main"])
         row1.pack(fill=tk.X, pady=(0, 10))
 
-        tk.Label(row1, text="🎯 Шаблон:", bg=COLORS["bg_main"], fg=COLORS["text"],
+        tk.Label(row1, text="🎯 Шаблон:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
                  font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
         files_combo = ttk.Combobox(row1, textvariable=self.files_tmpl_var,
                                     values=list(self.FILE_TEMPLATES.keys()), width=24, state="readonly")
         files_combo.pack(side=tk.LEFT, padx=(8, 20))
         files_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_files())
 
-        tk.Label(row1, text="💾 Профіль:", bg=COLORS["bg_main"], fg=COLORS["text"],
+        tk.Label(row1, text="💾 Профіль:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
                  font=("Segoe UI", 10)).pack(side=tk.LEFT)
         self.files_profile_combo = ttk.Combobox(row1, textvariable=self.files_profile_var,
                                                  values=[], width=14, state="readonly")
@@ -722,6 +814,8 @@ class RenamerApp:
 
         self._create_button(row1, "💾", lambda: self._save_profile_files(), "outline").pack(side=tk.LEFT, padx=2)
         self._create_button(row1, "🗑", lambda: self._delete_profile_files(), "outline").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "📤", lambda: self._export_profile("general"), "outline").pack(side=tk.LEFT, padx=2)
+        self._create_button(row1, "📥", lambda: self._import_profile("general"), "outline").pack(side=tk.LEFT, padx=2)
 
         # Separator
         ttk.Separator(inner, orient="horizontal").pack(fill=tk.X, pady=8)
@@ -734,11 +828,11 @@ class RenamerApp:
         col1 = tk.Frame(row2, bg=COLORS["bg_main"])
         col1.pack(side=tk.LEFT, padx=(0, 30))
 
-        tk.Label(col1, text="Префікс:", bg=COLORS["bg_main"], fg=COLORS["text"],
+        tk.Label(col1, text="Префікс:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
                  font=("Segoe UI", 9)).grid(row=0, column=0, sticky="e", padx=(0, 5))
         ttk.Entry(col1, textvariable=self.files_pre_var, width=14).grid(row=0, column=1)
 
-        tk.Label(col1, text="Суфікс:", bg=COLORS["bg_main"], fg=COLORS["text"],
+        tk.Label(col1, text="Суфікс:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
                  font=("Segoe UI", 9)).grid(row=1, column=0, sticky="e", padx=(0, 5), pady=(5, 0))
         ttk.Entry(col1, textvariable=self.files_suf_var, width=14).grid(row=1, column=1, pady=(5, 0))
 
@@ -746,11 +840,11 @@ class RenamerApp:
         col2 = tk.Frame(row2, bg=COLORS["bg_main"])
         col2.pack(side=tk.LEFT, padx=(0, 30))
 
-        tk.Label(col2, text="Знайти:", bg=COLORS["bg_main"], fg=COLORS["text"],
+        tk.Label(col2, text="Знайти:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
                  font=("Segoe UI", 9)).grid(row=0, column=0, sticky="e", padx=(0, 5))
         ttk.Entry(col2, textvariable=self.files_find_var, width=14).grid(row=0, column=1)
 
-        tk.Label(col2, text="Замінити:", bg=COLORS["bg_main"], fg=COLORS["text"],
+        tk.Label(col2, text="Замінити:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
                  font=("Segoe UI", 9)).grid(row=1, column=0, sticky="e", padx=(0, 5), pady=(5, 0))
         ttk.Entry(col2, textvariable=self.files_repl_var, width=14).grid(row=1, column=1, pady=(5, 0))
 
@@ -759,9 +853,9 @@ class RenamerApp:
         col3.pack(side=tk.LEFT)
 
         tb.Checkbutton(col3, text="Regex", variable=self.files_regex_var,
-                       bootstyle="round-toggle").pack(anchor="w")
+                       bootstyle="success").pack(anchor="w")
         tb.Checkbutton(col3, text="Trim пробіли", variable=self.files_trim_var,
-                       bootstyle="round-toggle").pack(anchor="w", pady=(5, 0))
+                       bootstyle="success").pack(anchor="w", pady=(5, 0))
 
         # ===== ADVANCED OPTIONS (Collapsible) =====
         self.files_adv_visible = tk.BooleanVar(value=False)
@@ -794,27 +888,27 @@ class RenamerApp:
 
         # Numbering
         num_frame = tk.LabelFrame(adv_row, text="Нумерація", bg=COLORS["bg_secondary"],
-                                   fg=COLORS["text"], font=("Segoe UI", 9))
+                                   fg=COLORS["cyan"], font=("Segoe UI", 9))
         num_frame.pack(side=tk.LEFT, padx=(0, 15))
         num_inner = tk.Frame(num_frame, bg=COLORS["bg_secondary"])
         num_inner.pack(padx=8, pady=5)
 
-        tk.Label(num_inner, text="Старт:", bg=COLORS["bg_secondary"], fg=COLORS["text"],
+        tk.Label(num_inner, text="Старт:", bg=COLORS["bg_secondary"], fg=COLORS["cyan"],
                  font=("Segoe UI", 8)).grid(row=0, column=0)
         ttk.Spinbox(num_inner, textvariable=self.files_num_start_var, from_=0, to=9999,
                     width=4).grid(row=0, column=1, padx=2)
-        tk.Label(num_inner, text="Крок:", bg=COLORS["bg_secondary"], fg=COLORS["text"],
+        tk.Label(num_inner, text="Крок:", bg=COLORS["bg_secondary"], fg=COLORS["cyan"],
                  font=("Segoe UI", 8)).grid(row=0, column=2, padx=(5, 0))
         ttk.Spinbox(num_inner, textvariable=self.files_num_step_var, from_=1, to=100,
                     width=3).grid(row=0, column=3, padx=2)
-        tk.Label(num_inner, text="Цифри:", bg=COLORS["bg_secondary"], fg=COLORS["text"],
+        tk.Label(num_inner, text="Цифри:", bg=COLORS["bg_secondary"], fg=COLORS["cyan"],
                  font=("Segoe UI", 8)).grid(row=0, column=4, padx=(5, 0))
         ttk.Spinbox(num_inner, textvariable=self.files_num_padding_var, from_=1, to=5,
                     width=3).grid(row=0, column=5, padx=2)
 
         # Date
         date_frame = tk.LabelFrame(adv_row, text="Додати дату", bg=COLORS["bg_secondary"],
-                                    fg=COLORS["text"], font=("Segoe UI", 9))
+                                    fg=COLORS["cyan"], font=("Segoe UI", 9))
         date_frame.pack(side=tk.LEFT, padx=(0, 15))
         date_inner = tk.Frame(date_frame, bg=COLORS["bg_secondary"])
         date_inner.pack(padx=8, pady=5)
@@ -826,14 +920,14 @@ class RenamerApp:
 
         # Remove pattern
         remove_frame = tk.LabelFrame(adv_row, text="Видалити", bg=COLORS["bg_secondary"],
-                                      fg=COLORS["text"], font=("Segoe UI", 9))
+                                      fg=COLORS["cyan"], font=("Segoe UI", 9))
         remove_frame.pack(side=tk.LEFT, padx=(0, 15))
         ttk.Combobox(remove_frame, textvariable=self.files_remove_var,
                      values=list(PATTERN_LABELS.keys()), width=13, state="readonly").pack(padx=8, pady=5)
 
         # Case
         case_frame = tk.LabelFrame(adv_row, text="Регістр", bg=COLORS["bg_secondary"],
-                                    fg=COLORS["text"], font=("Segoe UI", 9))
+                                    fg=COLORS["cyan"], font=("Segoe UI", 9))
         case_frame.pack(side=tk.LEFT)
         ttk.Combobox(case_frame, textvariable=self.files_case_var,
                      values=list(CASE_LABELS.keys()), width=11, state="readonly").pack(padx=8, pady=5)
@@ -843,10 +937,10 @@ class RenamerApp:
         adv_row2.pack(fill=tk.X, pady=(10, 0))
 
         tb.Checkbutton(adv_row2, text="📋 Копіювати (не переміщувати)", variable=self.files_copy_var,
-                       bootstyle="round-toggle").pack(side=tk.LEFT, padx=(0, 20))
+                       bootstyle="success").pack(side=tk.LEFT, padx=(0, 20))
 
         tb.Checkbutton(adv_row2, text="💾 Backup оригіналів", variable=self.files_backup_var,
-                       bootstyle="round-toggle").pack(side=tk.LEFT, padx=(0, 5))
+                       bootstyle="success").pack(side=tk.LEFT, padx=(0, 5))
         self._create_button(adv_row2, "📂", lambda: self._choose_backup_dir(self.files_backup_dir_var),
                            "outline").pack(side=tk.LEFT, padx=(0, 20))
 
@@ -859,7 +953,7 @@ class RenamerApp:
         adv_row3 = tk.Frame(adv_inner, bg=COLORS["bg_secondary"])
         adv_row3.pack(fill=tk.X, pady=(10, 0))
 
-        tk.Label(adv_row3, text="Фільтр:", bg=COLORS["bg_secondary"], fg=COLORS["text"],
+        tk.Label(adv_row3, text="Фільтр:", bg=COLORS["bg_secondary"], fg=COLORS["cyan"],
                  font=("Segoe UI", 9)).pack(side=tk.LEFT)
         filter_combo = ttk.Combobox(adv_row3, textvariable=self.files_filter_var,
                      values=["Всі", "🎵 Аудіо", "🖼 Зображення", "📄 Документи", "🎬 Відео"],
@@ -868,35 +962,52 @@ class RenamerApp:
         filter_combo.bind("<<ComboboxSelected>>", lambda e: self._apply_filter_files())
 
         tb.Checkbutton(adv_row3, text="Включати підпапки", variable=self.files_recursive_var,
-                       bootstyle="round-toggle").pack(side=tk.LEFT)
+                       bootstyle="success").pack(side=tk.LEFT)
 
-        # ===== FILE LIST =====
-        self.files_tree = self._create_treeview(self.files_frame, self.files_state, SUPPORTED, self._refresh_files, is_music=False)
-
-        # ===== ACTION BAR (Bottom) =====
+        # ===== ACTION BAR (Bottom) - pack BEFORE treeview =====
         action_frame = tk.Frame(self.files_frame, bg=COLORS["bg_secondary"])
         action_frame.pack(fill=tk.X, side=tk.BOTTOM)
 
         action_inner = tk.Frame(action_frame, bg=COLORS["bg_secondary"])
-        action_inner.pack(pady=12)
+        action_inner.pack(pady=10)
 
         # Main action button - larger and more prominent
         rename_btn = tb.Button(action_inner, text="🚀 ПЕРЕЙМЕНУВАТИ",
                                command=lambda: self._rename_selected(self.files_state, self.files_tree, self.files_copy_var,
                                                          self._refresh_files, self.files_history,
                                                          self.files_backup_var, self.files_backup_dir_var),
-                               bootstyle="info", width=20)
-        rename_btn.pack(side=tk.LEFT, padx=(0, 15))
+                               bootstyle="success", width=18)
+        rename_btn.pack(side=tk.LEFT, padx=(0, 10))
 
         # Secondary actions
         self._create_button(action_inner, "👁 Перегляд",
-                           lambda: self._show_preview(self.files_state), "outline").pack(side=tk.LEFT, padx=3)
+                           lambda: self._show_preview(self.files_state), "outline").pack(side=tk.LEFT, padx=2)
         self._create_button(action_inner, "↩️",
-                           lambda: self._undo(self.files_history, self._refresh_files), "outline").pack(side=tk.LEFT, padx=3)
+                           lambda: self._undo(self.files_history, self._refresh_files), "outline").pack(side=tk.LEFT, padx=2)
         self._create_button(action_inner, "↪️",
-                           lambda: self._redo(self.files_history, self._refresh_files), "outline").pack(side=tk.LEFT, padx=3)
+                           lambda: self._redo(self.files_history, self._refresh_files), "outline").pack(side=tk.LEFT, padx=2)
         self._create_button(action_inner, "🔄",
-                           self._refresh_files, "outline").pack(side=tk.LEFT, padx=3)
+                           self._refresh_files, "outline").pack(side=tk.LEFT, padx=2)
+
+        # Status on the right
+        tk.Label(action_frame, textvariable=self.status_var, bg=COLORS["bg_secondary"],
+                 fg=COLORS["cyan"], font=("Segoe UI", 9)).pack(side=tk.RIGHT, padx=15)
+
+        # ===== SEARCH BAR =====
+        search_frame = tk.Frame(self.files_frame, bg=COLORS["bg_main"])
+        search_frame.pack(fill=tk.X, padx=15, pady=(5, 0))
+
+        tk.Label(search_frame, text="🔍", bg=COLORS["bg_main"], fg=COLORS["cyan"],
+                 font=("Segoe UI", 10)).pack(side=tk.LEFT)
+        self._files_search_var = tk.StringVar()
+        search_entry = ttk.Entry(search_frame, textvariable=self._files_search_var, width=30)
+        search_entry.pack(side=tk.LEFT, padx=5)
+        search_entry.bind("<KeyRelease>", lambda e: self._filter_files_list())
+        tb.Button(search_frame, text="✗", width=3, bootstyle="secondary-outline",
+                  command=lambda: (self._files_search_var.set(""), self._filter_files_list())).pack(side=tk.LEFT)
+
+        # ===== FILE LIST =====
+        self.files_tree = self._create_treeview(self.files_frame, self.files_state, SUPPORTED, self._refresh_files, is_music=False)
 
     def _create_treeview(self, parent, state: AppState, allowed_ext: tuple, refresh_fn, is_music: bool = False) -> ttk.Treeview:
         """Створення таблиці файлів з сортуванням."""
@@ -924,6 +1035,8 @@ class RenamerApp:
             tree.column(c, width=widths.get(c, 100), anchor="w" if c not in ("✓", "№", "Тип") else "center")
 
         tree.bind("<Button-1>", lambda e: self._on_tree_click(e, tree, state))
+        tree.bind("<Double-1>", lambda e: self._on_tree_double_click(e, tree, state, refresh_fn))
+        tree.bind("<Button-3>", lambda e: self._on_tree_right_click(e, tree, state, refresh_fn))  # Right-click menu
 
         # Drag and drop support
         if self.dnd_enabled:
@@ -932,6 +1045,12 @@ class RenamerApp:
                 tree.dnd_bind("<<Drop>>", lambda e: self._on_drop(e, state, tree, allowed_ext, refresh_fn))
             except Exception:
                 pass
+
+        # Drag to reorder within tree
+        tree.bind("<ButtonPress-1>", lambda e: self._on_drag_start(e, tree, state))
+        tree.bind("<B1-Motion>", lambda e: self._on_drag_motion(e, tree, state))
+        tree.bind("<ButtonRelease-1>", lambda e: self._on_drag_end(e, tree, state, refresh_fn))
+        self._drag_data = {"item": None, "start_y": 0}
 
         return tree
 
@@ -1028,7 +1147,7 @@ class RenamerApp:
         inner.pack(fill=tk.X, padx=20, pady=12)
 
         for label, var in options:
-            tb.Checkbutton(inner, text=label, variable=var, bootstyle="round-toggle").pack(anchor="w", pady=4)
+            tb.Checkbutton(inner, text=label, variable=var, bootstyle="success").pack(anchor="w", pady=4)
 
     def _save_settings(self) -> None:
         """Зберегти налаштування."""
@@ -1056,6 +1175,50 @@ class RenamerApp:
         self.use_fallback_var.set(True)
         self.threshold_label.config(text="100 файлів")
         self.status_var.set("✅ Налаштування скинуто")
+
+    # ========== Live Preview ==========
+
+    def _setup_live_preview(self) -> None:
+        """Setup live preview - update table as user types."""
+        # Music page variables to watch
+        music_vars = [
+            self.music_tmpl_var, self.music_pre_var, self.music_suf_var,
+            self.music_find_var, self.music_repl_var, self.music_case_var,
+            self.music_remove_var, self.music_date_mode_var, self.music_date_format_var,
+        ]
+        for var in music_vars:
+            var.trace_add("write", lambda *args: self._debounce_music_preview())
+
+        # Files page variables to watch
+        files_vars = [
+            self.files_tmpl_var, self.files_pre_var, self.files_suf_var,
+            self.files_find_var, self.files_repl_var, self.files_case_var,
+            self.files_remove_var, self.files_date_mode_var, self.files_date_format_var,
+        ]
+        for var in files_vars:
+            var.trace_add("write", lambda *args: self._debounce_files_preview())
+
+    def _debounce_music_preview(self) -> None:
+        """Debounced update for music preview."""
+        if self._music_preview_timer:
+            self.root.after_cancel(self._music_preview_timer)
+        self._music_preview_timer = self.root.after(300, self._refresh_music)
+
+    def _debounce_files_preview(self) -> None:
+        """Debounced update for files preview."""
+        if self._files_preview_timer:
+            self.root.after_cancel(self._files_preview_timer)
+        self._files_preview_timer = self.root.after(300, self._refresh_files)
+
+    def _filter_music_list(self) -> None:
+        """Filter music list by search term."""
+        search = self._music_search_var.get().lower() if self._music_search_var else ""
+        self._refresh_music(filter_text=search)
+
+    def _filter_files_list(self) -> None:
+        """Filter files list by search term."""
+        search = self._files_search_var.get().lower() if self._files_search_var else ""
+        self._refresh_files(filter_text=search)
 
     # ========== File Operations ==========
 
@@ -1146,7 +1309,7 @@ class RenamerApp:
         refresh_fn()
         self.status_var.set(f"✅ Додано {added} файлів")
 
-    def _refresh_music(self) -> None:
+    def _refresh_music(self, filter_text: str = "") -> None:
         """Оновити музичну таблицю."""
         self._refresh_tree(
             self.music_state, self.music_tree, self.music_count_var,
@@ -1155,10 +1318,10 @@ class RenamerApp:
             self.music_regex_var, self.music_case_var, self.music_remove_var,
             self.music_trim_var, self.music_date_mode_var, self.music_date_format_var,
             self.music_num_start_var, self.music_num_step_var, self.music_num_padding_var,
-            is_audio=True
+            is_audio=True, filter_text=filter_text
         )
 
-    def _refresh_files(self) -> None:
+    def _refresh_files(self, filter_text: str = "") -> None:
         """Оновити файлову таблицю."""
         self._refresh_tree(
             self.files_state, self.files_tree, self.files_count_var,
@@ -1167,7 +1330,7 @@ class RenamerApp:
             self.files_regex_var, self.files_case_var, self.files_remove_var,
             self.files_trim_var, self.files_date_mode_var, self.files_date_format_var,
             self.files_num_start_var, self.files_num_step_var, self.files_num_padding_var,
-            is_audio=False
+            is_audio=False, filter_text=filter_text
         )
 
     def _refresh_tree(self, state: AppState, tree: ttk.Treeview, count_var: tk.StringVar,
@@ -1176,14 +1339,19 @@ class RenamerApp:
                       regex_var: tk.BooleanVar, case_var: tk.StringVar, remove_var: tk.StringVar,
                       trim_var: tk.BooleanVar, date_mode_var: tk.StringVar, date_format_var: tk.StringVar,
                       num_start_var: tk.IntVar, num_step_var: tk.IntVar, num_padding_var: tk.IntVar,
-                      is_audio: bool) -> None:
+                      is_audio: bool, filter_text: str = "") -> None:
         """Оновити таблицю з усіма трансформаціями."""
         tree.delete(*tree.get_children())
 
         num_start = num_start_var.get()
         num_step = num_step_var.get()
 
+        visible_count = 0
         for i, entry in enumerate(state.entries):
+            # Apply search filter
+            if filter_text:
+                if filter_text not in entry.original.lower() and filter_text not in entry.new_name.lower():
+                    continue
             # Calculate current number
             current_num = num_start + (i * num_step)
 
@@ -1265,9 +1433,10 @@ class RenamerApp:
 
             entry.new_name = sanitize(base) + entry.ext
 
+            visible_count += 1
             tree.insert("", "end", iid=i, values=(
                 "✓" if entry.selected.get() else "",
-                i + 1,
+                visible_count,
                 entry.file_type,
                 entry.original,
                 entry.new_name,
@@ -1276,7 +1445,10 @@ class RenamerApp:
             ))
 
         selected = state.count_selected()
-        count_var.set(f"{selected} / {len(state.entries)}")
+        if filter_text:
+            count_var.set(f"{selected} / {len(state.entries)} (показано: {visible_count})")
+        else:
+            count_var.set(f"{selected} / {len(state.entries)}")
 
     def _on_tree_click(self, event: tk.Event, tree: ttk.Treeview, state: AppState) -> None:
         """Клік по таблиці."""
@@ -1297,6 +1469,380 @@ class RenamerApp:
                 self.music_count_var.set(f"{state.count_selected()} / {len(state.entries)}")
             else:
                 self.files_count_var.set(f"{state.count_selected()} / {len(state.entries)}")
+
+    def _on_tree_double_click(self, event: tk.Event, tree: ttk.Treeview, state: AppState, refresh_fn) -> None:
+        """Подвійний клік для редагування нового імені."""
+        region = tree.identify_region(event.x, event.y)
+        if region != "cell": return
+        col = tree.identify_column(event.x)
+        item = tree.identify_row(event.y)
+        if not item: return
+        idx = int(item)
+        if idx >= len(state.entries): return
+
+        # Only allow editing the "New Name" column (#5)
+        if col != "#5": return
+
+        entry = state.entries[idx]
+
+        # Get cell position
+        x, y, w, h = tree.bbox(item, "Нове ім'я")
+        if not x: return
+
+        # Create entry widget for editing
+        edit_var = tk.StringVar(value=os.path.splitext(entry.new_name)[0])
+        edit_entry = ttk.Entry(tree, textvariable=edit_var, font=("Segoe UI", 10))
+        edit_entry.place(x=x, y=y, width=w, height=h)
+        edit_entry.focus_set()
+        edit_entry.select_range(0, tk.END)
+
+        def save_edit(event=None):
+            new_base = edit_var.get().strip()
+            if new_base:
+                entry.new_name = sanitize(new_base) + entry.ext
+                tree.set(idx, "Нове ім'я", entry.new_name)
+            edit_entry.destroy()
+
+        def cancel_edit(event=None):
+            edit_entry.destroy()
+
+        edit_entry.bind("<Return>", save_edit)
+        edit_entry.bind("<Escape>", cancel_edit)
+        edit_entry.bind("<FocusOut>", save_edit)
+
+    def _on_tree_right_click(self, event: tk.Event, tree: ttk.Treeview, state: AppState, refresh_fn) -> None:
+        """Right-click context menu."""
+        item = tree.identify_row(event.y)
+        if not item:
+            return
+
+        idx = int(item)
+        if idx >= len(state.entries):
+            return
+
+        # Select the item if not already selected
+        tree.selection_set(item)
+        entry = state.entries[idx]
+
+        # Create context menu
+        menu = tk.Menu(self.root, tearoff=0, bg=COLORS["bg_secondary"], fg=COLORS["text"],
+                      activebackground=COLORS["cyan"], activeforeground="#000000")
+
+        menu.add_command(label="✓ Вибрати", command=lambda: self._ctx_select(entry, tree, idx, state))
+        menu.add_command(label="✗ Зняти вибір", command=lambda: self._ctx_deselect(entry, tree, idx, state))
+        menu.add_separator()
+        menu.add_command(label="✏️ Редагувати ім'я", command=lambda: self._ctx_edit_name(tree, state, idx, refresh_fn))
+        menu.add_command(label="🔄 Скинути ім'я", command=lambda: self._ctx_reset_name(entry, tree, idx))
+        menu.add_separator()
+
+        # Add preview option for images and audio with album art
+        if entry.ext.lower() in IMG or entry.ext.lower() in AUDIO:
+            menu.add_command(label="🖼️ Перегляд", command=lambda: self._ctx_preview_media(entry))
+
+        # Add MusicBrainz search for audio files
+        if entry.ext.lower() in AUDIO:
+            menu.add_command(label="🌐 Шукати в MusicBrainz",
+                           command=lambda: self._ctx_search_musicbrainz(entry, tree, idx, refresh_fn))
+
+        if entry.ext.lower() in IMG or entry.ext.lower() in AUDIO:
+            menu.add_separator()
+
+        menu.add_command(label="📂 Відкрити папку", command=lambda: self._ctx_open_folder(entry))
+        menu.add_command(label="📄 Відкрити файл", command=lambda: self._ctx_open_file(entry))
+        menu.add_separator()
+        menu.add_command(label="🗑 Видалити зі списку", command=lambda: self._ctx_remove(state, tree, idx, refresh_fn))
+
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _ctx_select(self, entry: FileEntry, tree: ttk.Treeview, idx: int, state: AppState) -> None:
+        entry.selected.set(True)
+        tree.set(idx, "✓", "✓")
+        self._update_count(state)
+
+    def _ctx_deselect(self, entry: FileEntry, tree: ttk.Treeview, idx: int, state: AppState) -> None:
+        entry.selected.set(False)
+        tree.set(idx, "✓", "")
+        self._update_count(state)
+
+    def _ctx_edit_name(self, tree: ttk.Treeview, state: AppState, idx: int, refresh_fn) -> None:
+        # Simulate double-click on the name column
+        item = str(idx)
+        bbox = tree.bbox(item, "Нове ім'я")
+        if bbox:
+            class FakeEvent:
+                def __init__(self, x, y):
+                    self.x = x
+                    self.y = y
+            event = FakeEvent(bbox[0] + 5, bbox[1] + 5)
+            self._on_tree_double_click(event, tree, state, refresh_fn)
+
+    def _ctx_reset_name(self, entry: FileEntry, tree: ttk.Treeview, idx: int) -> None:
+        entry.new_name = entry.original
+        tree.set(idx, "Нове ім'я", entry.new_name)
+
+    def _ctx_open_folder(self, entry: FileEntry) -> None:
+        import subprocess
+        folder = entry.directory
+        if platform.system() == "Windows":
+            subprocess.run(["explorer", folder])
+        elif platform.system() == "Darwin":
+            subprocess.run(["open", folder])
+        else:
+            subprocess.run(["xdg-open", folder])
+
+    def _ctx_open_file(self, entry: FileEntry) -> None:
+        import subprocess
+        if platform.system() == "Windows":
+            os.startfile(entry.path)
+        elif platform.system() == "Darwin":
+            subprocess.run(["open", entry.path])
+        else:
+            subprocess.run(["xdg-open", entry.path])
+
+    def _ctx_remove(self, state: AppState, tree: ttk.Treeview, idx: int, refresh_fn) -> None:
+        if idx < len(state.entries):
+            entry = state.entries[idx]
+            state.path_set.discard(entry.path)
+            state.entries.remove(entry)
+            refresh_fn()
+
+    def _ctx_preview_media(self, entry: FileEntry) -> None:
+        """Preview image or album art from audio file."""
+        import io
+
+        preview_win = tk.Toplevel(self.root)
+        preview_win.title(f"Перегляд: {entry.original_name}")
+        preview_win.configure(bg=COLORS["bg_main"])
+        preview_win.geometry("400x400")
+        preview_win.transient(self.root)
+
+        frame = tk.Frame(preview_win, bg=COLORS["bg_main"], padx=10, pady=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+
+        img_data = None
+        img = None
+
+        if entry.ext.lower() in IMG:
+            try:
+                img = Image.open(entry.path)
+            except Exception:
+                pass
+        elif entry.ext.lower() in AUDIO:
+            img_data = get_album_art(entry.path)
+            if img_data:
+                try:
+                    img = Image.open(io.BytesIO(img_data))
+                except Exception:
+                    pass
+
+        if img:
+            max_size = 380
+            img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            self._preview_references.append(photo)
+
+            label = tk.Label(frame, image=photo, bg=COLORS["bg_main"])
+            label.pack(expand=True)
+
+            info_text = f"{img.size[0]}×{img.size[1]}"
+            tk.Label(frame, text=info_text, bg=COLORS["bg_main"], fg=COLORS["cyan"],
+                    font=("Segoe UI", 10)).pack(pady=(5, 0))
+        else:
+            tk.Label(frame, text="Зображення недоступне",
+                    bg=COLORS["bg_main"], fg=COLORS["text"],
+                    font=("Segoe UI", 12)).pack(expand=True)
+
+        ttk.Button(frame, text="Закрити", command=preview_win.destroy,
+                  bootstyle="outline").pack(pady=(10, 0))
+
+    def _ctx_search_musicbrainz(self, entry: FileEntry, tree: ttk.Treeview,
+                                 idx: int, refresh_fn) -> None:
+        """Search MusicBrainz for track metadata."""
+        import threading
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title("MusicBrainz пошук")
+        dialog.geometry("550x400")
+        dialog.configure(bg=COLORS["bg_main"])
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        # Header
+        tk.Label(dialog, text="🌐 Пошук метаданих в MusicBrainz",
+                 font=("Segoe UI", 12, "bold"), bg=COLORS["bg_main"],
+                 fg=COLORS["cyan"]).pack(pady=(10, 5))
+
+        tk.Label(dialog, text=f"Файл: {entry.original}",
+                 font=("Segoe UI", 9), bg=COLORS["bg_main"],
+                 fg=COLORS["text_dim"]).pack(pady=(0, 10))
+
+        # Search fields
+        search_frame = tk.Frame(dialog, bg=COLORS["bg_main"])
+        search_frame.pack(fill=tk.X, padx=15)
+
+        artist_var = tk.StringVar(value=entry.metadata.get("artist", ""))
+        title_var = tk.StringVar(value=entry.metadata.get("title", "") or os.path.splitext(entry.original)[0])
+
+        tk.Label(search_frame, text="Виконавець:", bg=COLORS["bg_main"],
+                 fg=COLORS["text"]).grid(row=0, column=0, sticky="e", padx=5)
+        ttk.Entry(search_frame, textvariable=artist_var, width=40).grid(row=0, column=1, pady=2)
+
+        tk.Label(search_frame, text="Назва:", bg=COLORS["bg_main"],
+                 fg=COLORS["text"]).grid(row=1, column=0, sticky="e", padx=5)
+        ttk.Entry(search_frame, textvariable=title_var, width=40).grid(row=1, column=1, pady=2)
+
+        # Results treeview
+        results_frame = tk.Frame(dialog, bg=COLORS["bg_main"])
+        results_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+
+        cols = ("Виконавець", "Назва", "Альбом", "Рік")
+        results_tree = ttk.Treeview(results_frame, columns=cols, show="headings", height=8)
+
+        vsb = ttk.Scrollbar(results_frame, orient="vertical", command=results_tree.yview)
+        results_tree.configure(yscrollcommand=vsb.set)
+        results_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        for col in cols:
+            results_tree.heading(col, text=col)
+            results_tree.column(col, width=120)
+
+        status_var = tk.StringVar(value="Введіть дані та натисніть 'Шукати'")
+        tk.Label(dialog, textvariable=status_var, bg=COLORS["bg_main"],
+                 fg=COLORS["text_dim"], font=("Segoe UI", 9)).pack()
+
+        results_data = []
+
+        def do_search():
+            artist = artist_var.get().strip()
+            title = title_var.get().strip()
+
+            if not artist and not title:
+                status_var.set("Введіть виконавця або назву")
+                return
+
+            status_var.set("🔄 Пошук...")
+            results_tree.delete(*results_tree.get_children())
+            results_data.clear()
+
+            def search_thread():
+                try:
+                    results = search_recording(artist=artist or None, title=title or None, limit=10)
+                    dialog.after(0, lambda: show_results(results))
+                except Exception as e:
+                    dialog.after(0, lambda: status_var.set(f"❌ Помилка: {e}"))
+
+            threading.Thread(target=search_thread, daemon=True).start()
+
+        def show_results(results):
+            results_data.clear()
+            results_data.extend(results)
+
+            if not results:
+                status_var.set("Нічого не знайдено")
+                return
+
+            for i, r in enumerate(results):
+                results_tree.insert("", "end", iid=str(i), values=(
+                    r.get("artist", "—"),
+                    r.get("title", "—"),
+                    r.get("album", "—"),
+                    r.get("year", "—")
+                ))
+
+            status_var.set(f"Знайдено {len(results)} результатів")
+
+        def apply_selected():
+            selection = results_tree.selection()
+            if not selection:
+                return
+
+            idx_sel = int(selection[0])
+            if idx_sel >= len(results_data):
+                return
+
+            result = results_data[idx_sel]
+
+            # Update entry metadata and new_name
+            if result.get("artist"):
+                entry.metadata["artist"] = result["artist"]
+            if result.get("title"):
+                entry.metadata["title"] = result["title"]
+            if result.get("album"):
+                entry.metadata["album"] = result["album"]
+            if result.get("year"):
+                entry.metadata["year"] = result["year"]
+
+            # Update new_name based on template
+            artist = result.get("artist", "")
+            title = result.get("title", "")
+            if artist and title:
+                entry.new_name = sanitize(f"{artist} - {title}") + entry.ext
+            elif title:
+                entry.new_name = sanitize(title) + entry.ext
+
+            refresh_fn()
+            dialog.destroy()
+            self.status_var.set(f"✅ Застосовано: {entry.new_name}")
+
+        # Buttons
+        btn_frame = tk.Frame(dialog, bg=COLORS["bg_main"])
+        btn_frame.pack(fill=tk.X, padx=15, pady=(0, 15))
+
+        ttk.Button(btn_frame, text="🔍 Шукати", command=do_search,
+                  bootstyle="info", width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="✓ Застосувати", command=apply_selected,
+                  bootstyle="success", width=12).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Закрити", command=dialog.destroy,
+                  bootstyle="outline", width=12).pack(side=tk.LEFT, padx=5)
+
+    def _update_count(self, state: AppState) -> None:
+        count = state.count_selected()
+        total = len(state.entries)
+        if state == self.music_state:
+            self.music_count_var.set(f"{count} / {total}")
+        else:
+            self.files_count_var.set(f"{count} / {total}")
+
+    # ========== Drag to reorder ==========
+
+    def _on_drag_start(self, event: tk.Event, tree: ttk.Treeview, state: AppState) -> None:
+        """Start drag operation."""
+        item = tree.identify_row(event.y)
+        if item:
+            self._drag_data["item"] = item
+            self._drag_data["start_y"] = event.y
+
+    def _on_drag_motion(self, event: tk.Event, tree: ttk.Treeview, state: AppState) -> None:
+        """Handle drag motion - visual feedback."""
+        if not self._drag_data["item"]:
+            return
+        # Could add visual feedback here (highlight drop target)
+
+    def _on_drag_end(self, event: tk.Event, tree: ttk.Treeview, state: AppState, refresh_fn) -> None:
+        """End drag - reorder if moved to different position."""
+        if not self._drag_data["item"]:
+            return
+
+        source_item = self._drag_data["item"]
+        target_item = tree.identify_row(event.y)
+
+        if target_item and source_item != target_item:
+            try:
+                source_idx = int(source_item)
+                target_idx = int(target_item)
+
+                if 0 <= source_idx < len(state.entries) and 0 <= target_idx < len(state.entries):
+                    # Reorder entries
+                    entry = state.entries.pop(source_idx)
+                    state.entries.insert(target_idx, entry)
+                    refresh_fn()
+                    self.status_var.set(f"📋 Переміщено на позицію {target_idx + 1}")
+            except (ValueError, IndexError):
+                pass
+
+        self._drag_data["item"] = None
+        self._drag_data["start_y"] = 0
 
     def _select_all_in(self, state: AppState, tree: ttk.Treeview) -> None:
         for i, e in enumerate(state.entries):
@@ -1349,8 +1895,9 @@ class RenamerApp:
             if not messagebox.askyesno("Підтвердження", f"Перейменувати {len(selected)} файлів?"): return
 
         if check_for_duplicate_destinations(state.entries, state.target_dir):
-            messagebox.showerror("Помилка", "Однакові імена призначення!")
-            return
+            conflicts = find_destination_conflicts(state.entries, state.target_dir)
+            if not self._show_conflict_dialog(conflicts, state, refresh_fn):
+                return
 
         # Prepare backup directory
         backup_dir = None
@@ -1415,7 +1962,7 @@ class RenamerApp:
         self._operation_worker.start()
 
     def _on_rename_done(self, state: AppState, success: int, entries: list, refresh_fn) -> None:
-        self.status_var.set(f"✅ Перейменовано {success} файлів")
+        self.status_var.set(f"✅ Перейменовано {success} файлів (↩️ для скасування)")
 
         if self.auto_remove_var.get() and entries:
             for entry in entries:
@@ -1425,7 +1972,7 @@ class RenamerApp:
             refresh_fn()
 
         if self.show_notif_var.get():
-            messagebox.showinfo("Готово", f"Перейменовано: {success}")
+            messagebox.showinfo("Готово", f"Перейменовано: {success}\n\nНатисніть ↩️ для скасування")
 
     # ========== Undo/Redo ==========
 
@@ -1433,16 +1980,25 @@ class RenamerApp:
         """Скасувати останню операцію."""
         if not history.can_undo():
             self.status_var.set("⚠️ Немає операцій для скасування")
+            messagebox.showinfo("Undo", f"Історія порожня. Спочатку перейменуйте файли.")
             return
+
+        desc = history.undo_description()
+        self.status_var.set(f"⏳ {desc}...")
 
         def on_progress(msg: str):
             self.root.after(0, lambda: self.status_var.set(msg))
 
-        if history.undo(on_progress):
-            self.status_var.set("↩️ Операцію скасовано")
-            refresh_fn()
-        else:
-            self.status_var.set("❌ Помилка скасування")
+        try:
+            if history.undo(on_progress):
+                self.status_var.set("↩️ Операцію скасовано")
+                refresh_fn()
+            else:
+                self.status_var.set("❌ Помилка скасування")
+                messagebox.showerror("Помилка", "Не вдалося скасувати операцію. Можливо файли були переміщені або видалені.")
+        except Exception as e:
+            self.status_var.set(f"❌ Помилка: {e}")
+            messagebox.showerror("Помилка", f"Помилка скасування: {e}")
 
     def _redo(self, history: OperationHistory, refresh_fn) -> None:
         """Повторити скасовану операцію."""
@@ -1458,6 +2014,116 @@ class RenamerApp:
             refresh_fn()
         else:
             self.status_var.set("❌ Помилка повторення")
+
+    # ========== Conflict Resolution ==========
+
+    def _show_conflict_dialog(self, conflicts: Dict[str, List[FileEntry]],
+                               state: AppState, refresh_fn) -> bool:
+        """
+        Show conflict resolution dialog.
+
+        Args:
+            conflicts: Dict mapping destination path to conflicting entries
+            state: App state
+            refresh_fn: Function to refresh the tree view
+
+        Returns:
+            True if conflicts resolved and should proceed, False to cancel
+        """
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Конфлікт імен файлів")
+        dialog.geometry("600x400")
+        dialog.configure(bg=COLORS["bg_main"])
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        result = {"proceed": False}
+
+        # Header
+        tk.Label(dialog, text="⚠️ Знайдено конфлікти імен",
+                 font=("Segoe UI", 14, "bold"), bg=COLORS["bg_main"],
+                 fg=COLORS["warning"]).pack(pady=(15, 5))
+
+        conflict_count = sum(len(entries) for entries in conflicts.values())
+        tk.Label(dialog, text=f"{len(conflicts)} конфліктів ({conflict_count} файлів мають однакові імена)",
+                 font=("Segoe UI", 10), bg=COLORS["bg_main"],
+                 fg=COLORS["text"]).pack(pady=(0, 10))
+
+        # Conflict list
+        list_frame = tk.Frame(dialog, bg=COLORS["bg_main"])
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+
+        cols = ("Нове ім'я", "Оригінал", "Папка")
+        tree = ttk.Treeview(list_frame, columns=cols, show="headings", height=8)
+
+        vsb = ttk.Scrollbar(list_frame, orient="vertical", command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+
+        tree.heading("Нове ім'я", text="Нове ім'я")
+        tree.heading("Оригінал", text="Оригінал")
+        tree.heading("Папка", text="Папка")
+
+        tree.column("Нове ім'я", width=200)
+        tree.column("Оригінал", width=200)
+        tree.column("Папка", width=150)
+
+        for dest_path, entries in conflicts.items():
+            for entry in entries:
+                tree.insert("", "end", values=(entry.new_name, entry.original, os.path.basename(entry.directory)))
+
+        # Options
+        options_frame = tk.Frame(dialog, bg=COLORS["bg_main"])
+        options_frame.pack(fill=tk.X, padx=15, pady=10)
+
+        tk.Label(options_frame, text="Оберіть дію:",
+                 font=("Segoe UI", 10, "bold"), bg=COLORS["bg_main"],
+                 fg=COLORS["cyan"]).pack(anchor="w")
+
+        def auto_number():
+            resolve_conflicts_auto_number(conflicts)
+            refresh_fn()
+            result["proceed"] = True
+            dialog.destroy()
+
+        def skip_conflicts():
+            for entries in conflicts.values():
+                for entry in entries[1:]:
+                    entry.selected.set(False)
+            refresh_fn()
+            result["proceed"] = True
+            dialog.destroy()
+
+        def cancel():
+            dialog.destroy()
+
+        btn_frame = tk.Frame(dialog, bg=COLORS["bg_main"])
+        btn_frame.pack(fill=tk.X, padx=15, pady=(0, 15))
+
+        ttk.Button(btn_frame, text="🔢 Додати номери",
+                  command=auto_number, bootstyle="success",
+                  width=18).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(btn_frame, text="⏭ Пропустити дублікати",
+                  command=skip_conflicts, bootstyle="warning",
+                  width=18).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(btn_frame, text="❌ Скасувати",
+                  command=cancel, bootstyle="danger",
+                  width=18).pack(side=tk.LEFT, padx=5)
+
+        # Descriptions
+        desc_frame = tk.Frame(dialog, bg=COLORS["bg_main"])
+        desc_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
+
+        tk.Label(desc_frame, text="• Додати номери: файли отримають суфікс (02), (03) і т.д.",
+                 font=("Segoe UI", 9), bg=COLORS["bg_main"], fg=COLORS["text_dim"]).pack(anchor="w")
+        tk.Label(desc_frame, text="• Пропустити: перейменується лише перший файл з кожної групи",
+                 font=("Segoe UI", 9), bg=COLORS["bg_main"], fg=COLORS["text_dim"]).pack(anchor="w")
+
+        dialog.wait_window()
+        return result["proceed"]
 
     # ========== Preview ==========
 
@@ -1725,6 +2391,49 @@ class RenamerApp:
             self._update_profile_combos()
             self.files_profile_var.set("")
             self.status_var.set(f"🗑 Профіль '{name}' видалено")
+
+    def _export_profile(self, profile_type: str) -> None:
+        """Export profile to file."""
+        from tkinter import filedialog
+
+        if profile_type == "audio":
+            name = self.music_profile_var.get()
+        else:
+            name = self.files_profile_var.get()
+
+        if not name:
+            messagebox.showwarning("Попередження", "Виберіть профіль для експорту")
+            return
+
+        filepath = filedialog.asksaveasfilename(
+            title="Експорт профілю",
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            initialfile=f"{name}.json"
+        )
+
+        if filepath:
+            if self.profile_manager.export_profile(name, filepath):
+                self.status_var.set(f"📤 Профіль '{name}' експортовано")
+            else:
+                messagebox.showerror("Помилка", "Не вдалося експортувати профіль")
+
+    def _import_profile(self, profile_type: str) -> None:
+        """Import profile from file."""
+        from tkinter import filedialog
+
+        filepath = filedialog.askopenfilename(
+            title="Імпорт профілю",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+        )
+
+        if filepath:
+            success, message = self.profile_manager.import_profile(filepath)
+            if success:
+                self._update_profile_combos()
+                self.status_var.set(f"📥 {message}")
+            else:
+                messagebox.showerror("Помилка", message)
 
     # ========== Filters ==========
 

@@ -14,6 +14,8 @@ from renamer.file_ops import (
     collect_files,
     is_duplicate_name,
     check_for_duplicate_destinations,
+    find_destination_conflicts,
+    resolve_conflicts_auto_number,
 )
 
 
@@ -427,5 +429,165 @@ class TestCheckForDuplicateDestinations:
         result = check_for_duplicate_destinations(entries, target_dir='/output')
 
         assert result is True
+
+        root.destroy()
+
+
+class TestFindDestinationConflicts:
+    """Tests for find_destination_conflicts function."""
+
+    def test_finds_conflicts(self):
+        """Should find all conflicting entries."""
+        root = tk.Tk()
+        root.withdraw()
+
+        entries = [
+            FileEntry(
+                path='/test/file1.mp3',
+                original='file1.mp3',
+                directory='/test',
+                new_name='song.mp3',
+                ext='.mp3',
+                file_type='🎵',
+                selected=tk.BooleanVar(value=True),
+            ),
+            FileEntry(
+                path='/test/file2.mp3',
+                original='file2.mp3',
+                directory='/test',
+                new_name='song.mp3',
+                ext='.mp3',
+                file_type='🎵',
+                selected=tk.BooleanVar(value=True),
+            ),
+            FileEntry(
+                path='/test/file3.mp3',
+                original='file3.mp3',
+                directory='/test',
+                new_name='other.mp3',
+                ext='.mp3',
+                file_type='🎵',
+                selected=tk.BooleanVar(value=True),
+            ),
+        ]
+
+        conflicts = find_destination_conflicts(entries)
+
+        assert len(conflicts) == 1
+        conflict_entries = list(conflicts.values())[0]
+        assert len(conflict_entries) == 2
+
+        root.destroy()
+
+    def test_no_conflicts(self):
+        """Should return empty dict when no conflicts."""
+        root = tk.Tk()
+        root.withdraw()
+
+        entries = [
+            FileEntry(
+                path='/test/file1.mp3',
+                original='file1.mp3',
+                directory='/test',
+                new_name='song1.mp3',
+                ext='.mp3',
+                file_type='🎵',
+                selected=tk.BooleanVar(value=True),
+            ),
+            FileEntry(
+                path='/test/file2.mp3',
+                original='file2.mp3',
+                directory='/test',
+                new_name='song2.mp3',
+                ext='.mp3',
+                file_type='🎵',
+                selected=tk.BooleanVar(value=True),
+            ),
+        ]
+
+        conflicts = find_destination_conflicts(entries)
+
+        assert len(conflicts) == 0
+
+        root.destroy()
+
+
+class TestResolveConflictsAutoNumber:
+    """Tests for resolve_conflicts_auto_number function."""
+
+    def test_adds_numbers_to_duplicates(self):
+        """Should add numbers to duplicate names."""
+        root = tk.Tk()
+        root.withdraw()
+
+        entries = [
+            FileEntry(
+                path='/test/file1.mp3',
+                original='file1.mp3',
+                directory='/test',
+                new_name='song.mp3',
+                ext='.mp3',
+                file_type='🎵',
+                selected=tk.BooleanVar(value=True),
+            ),
+            FileEntry(
+                path='/test/file2.mp3',
+                original='file2.mp3',
+                directory='/test',
+                new_name='song.mp3',
+                ext='.mp3',
+                file_type='🎵',
+                selected=tk.BooleanVar(value=True),
+            ),
+            FileEntry(
+                path='/test/file3.mp3',
+                original='file3.mp3',
+                directory='/test',
+                new_name='song.mp3',
+                ext='.mp3',
+                file_type='🎵',
+                selected=tk.BooleanVar(value=True),
+            ),
+        ]
+
+        conflicts = find_destination_conflicts(entries)
+        resolve_conflicts_auto_number(conflicts)
+
+        assert entries[0].new_name == 'song.mp3'
+        assert entries[1].new_name == 'song (02).mp3'
+        assert entries[2].new_name == 'song (03).mp3'
+
+        root.destroy()
+
+    def test_custom_padding(self):
+        """Should use custom padding for numbers."""
+        root = tk.Tk()
+        root.withdraw()
+
+        entries = [
+            FileEntry(
+                path='/test/file1.mp3',
+                original='file1.mp3',
+                directory='/test',
+                new_name='track.mp3',
+                ext='.mp3',
+                file_type='🎵',
+                selected=tk.BooleanVar(value=True),
+            ),
+            FileEntry(
+                path='/test/file2.mp3',
+                original='file2.mp3',
+                directory='/test',
+                new_name='track.mp3',
+                ext='.mp3',
+                file_type='🎵',
+                selected=tk.BooleanVar(value=True),
+            ),
+        ]
+
+        conflicts = find_destination_conflicts(entries)
+        resolve_conflicts_auto_number(conflicts, padding=3)
+
+        assert entries[1].new_name == 'track (002).mp3'
 
         root.destroy()

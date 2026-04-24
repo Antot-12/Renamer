@@ -1,5 +1,6 @@
 """Tests for profile management."""
 
+import json
 import os
 import tempfile
 import shutil
@@ -285,6 +286,138 @@ class TestProfileManager:
         profiles = manager.get_all_profiles()
 
         assert len(profiles) == 0
+
+    def test_export_single_profile(self):
+        manager = ProfileManager(self.profile_file)
+        manager.save_profile(RenameProfile(name="export_test", template="{artist} - {title}", prefix="PRE_"))
+
+        export_file = Path(self.tmpdir) / "exported.json"
+        result = manager.export_profile("export_test", str(export_file))
+
+        assert result is True
+        assert export_file.exists()
+
+        with open(export_file, "r") as f:
+            data = json.load(f)
+        assert data.get("renamer_profile") is True
+        assert data["profile"]["name"] == "export_test"
+        assert data["profile"]["prefix"] == "PRE_"
+
+    def test_export_nonexistent_profile(self):
+        manager = ProfileManager(self.profile_file)
+        export_file = Path(self.tmpdir) / "exported.json"
+
+        result = manager.export_profile("nonexistent", str(export_file))
+
+        assert result is False
+        assert not export_file.exists()
+
+    def test_export_all_profiles(self):
+        manager = ProfileManager(self.profile_file)
+        manager.save_profile(RenameProfile(name="p1", template="t1"))
+        manager.save_profile(RenameProfile(name="p2", template="t2"))
+
+        export_file = Path(self.tmpdir) / "all_exported.json"
+        result = manager.export_all_profiles(str(export_file))
+
+        assert result is True
+        with open(export_file, "r") as f:
+            data = json.load(f)
+        assert data.get("renamer_profiles") is True
+        assert "p1" in data["profiles"]
+        assert "p2" in data["profiles"]
+
+    def test_import_single_profile(self):
+        export_file = Path(self.tmpdir) / "to_import.json"
+        with open(export_file, "w") as f:
+            json.dump({
+                "renamer_profile": True,
+                "version": "1.0",
+                "profile": {
+                    "name": "imported",
+                    "template": "imported_template",
+                    "prefix": "IMP_"
+                }
+            }, f)
+
+        manager = ProfileManager(self.profile_file)
+        success, message = manager.import_profile(str(export_file))
+
+        assert success is True
+        assert "1 profile" in message
+        profile = manager.get_profile("imported")
+        assert profile is not None
+        assert profile.prefix == "IMP_"
+
+    def test_import_multiple_profiles(self):
+        export_file = Path(self.tmpdir) / "multi_import.json"
+        with open(export_file, "w") as f:
+            json.dump({
+                "renamer_profiles": True,
+                "version": "1.0",
+                "profiles": {
+                    "multi1": {"name": "multi1", "template": "t1"},
+                    "multi2": {"name": "multi2", "template": "t2"}
+                }
+            }, f)
+
+        manager = ProfileManager(self.profile_file)
+        success, message = manager.import_profile(str(export_file))
+
+        assert success is True
+        assert "2 profile" in message
+        assert manager.profile_exists("multi1")
+        assert manager.profile_exists("multi2")
+
+    def test_import_invalid_file(self):
+        invalid_file = Path(self.tmpdir) / "invalid.json"
+        with open(invalid_file, "w") as f:
+            json.dump({"some": "data"}, f)
+
+        manager = ProfileManager(self.profile_file)
+        success, message = manager.import_profile(str(invalid_file))
+
+        assert success is False
+        assert "Invalid" in message
+
+    def test_import_corrupted_file(self):
+        corrupt_file = Path(self.tmpdir) / "corrupt.json"
+        with open(corrupt_file, "w") as f:
+            f.write("not valid json")
+
+        manager = ProfileManager(self.profile_file)
+        success, message = manager.import_profile(str(corrupt_file))
+
+        assert success is False
+        assert "Error" in message
+
+    def test_export_import_roundtrip(self):
+        manager = ProfileManager(self.profile_file)
+        original = RenameProfile(
+            name="roundtrip",
+            template="{title}",
+            prefix="A_",
+            suffix="_B",
+            use_regex=True,
+            num_start=5,
+            num_step=2,
+            profile_type="audio"
+        )
+        manager.save_profile(original)
+
+        export_file = Path(self.tmpdir) / "roundtrip.json"
+        manager.export_profile("roundtrip", str(export_file))
+
+        manager2 = ProfileManager(Path(self.tmpdir) / "new_profiles.json")
+        manager2.import_profile(str(export_file))
+
+        imported = manager2.get_profile("roundtrip")
+        assert imported.template == original.template
+        assert imported.prefix == original.prefix
+        assert imported.suffix == original.suffix
+        assert imported.use_regex == original.use_regex
+        assert imported.num_start == original.num_start
+        assert imported.profile_type == original.profile_type
 
 
 class TestGetProfileManager:

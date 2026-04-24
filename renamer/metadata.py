@@ -330,3 +330,58 @@ def format_file_size(size_bytes: int) -> str:
     elif size_bytes < 1024 * 1024 * 1024:
         return f"{size_bytes / 1024 / 1024:.1f} MB"
     return f"{size_bytes / 1024 / 1024 / 1024:.2f} GB"
+
+
+def get_album_art(filepath: str) -> Optional[bytes]:
+    """
+    Extract album art image data from audio file.
+
+    Args:
+        filepath: Path to audio file
+
+    Returns:
+        Raw image bytes or None if no art found
+    """
+    if not MUTAGEN_AVAILABLE:
+        return None
+
+    try:
+        audio = AudioFile(filepath)
+        if not audio:
+            return None
+
+        ext = os.path.splitext(filepath)[1].lower()
+
+        if ext == '.mp3':
+            if ID3:
+                try:
+                    tags = ID3(filepath)
+                    for key in tags.keys():
+                        if key.startswith('APIC'):
+                            return tags[key].data
+                except Exception:
+                    pass
+
+        elif ext == '.flac':
+            if FLAC:
+                try:
+                    flac = FLAC(filepath)
+                    if flac.pictures:
+                        return flac.pictures[0].data
+                except Exception:
+                    pass
+
+        elif ext in ('.m4a', '.mp4', '.m4b'):
+            if MP4:
+                try:
+                    mp4 = MP4(filepath)
+                    covers = mp4.tags.get('covr', [])
+                    if covers:
+                        return bytes(covers[0])
+                except Exception:
+                    pass
+
+        return None
+
+    except (MutagenError, FileNotFoundError, PermissionError, OSError):
+        return None

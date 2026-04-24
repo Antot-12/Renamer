@@ -1,10 +1,12 @@
 """Tests for undo/redo history system."""
 
+import json
 import os
 import tempfile
 import shutil
 from datetime import datetime
-from unittest.mock import MagicMock
+from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -58,14 +60,14 @@ class TestOperationHistory:
     """Tests for OperationHistory class."""
 
     def test_initial_state(self):
-        history = OperationHistory()
+        history = OperationHistory(persist=False)
         assert history.can_undo() is False
         assert history.can_redo() is False
         assert history.get_undo_count() == 0
         assert history.get_redo_count() == 0
 
     def test_record_batch(self):
-        history = OperationHistory()
+        history = OperationHistory(persist=False)
         ops = [
             RenameOperation("/old1.txt", "/new1.txt", False),
             RenameOperation("/old2.txt", "/new2.txt", False),
@@ -76,13 +78,13 @@ class TestOperationHistory:
         assert history.get_undo_count() == 1
 
     def test_record_empty_batch_ignored(self):
-        history = OperationHistory()
+        history = OperationHistory(persist=False)
         history.record_batch([])
 
         assert history.can_undo() is False
 
     def test_record_clears_redo_stack(self):
-        history = OperationHistory()
+        history = OperationHistory(persist=False)
 
         # Create initial state with redo available
         history.record_batch([RenameOperation("/a.txt", "/b.txt", False)])
@@ -93,7 +95,7 @@ class TestOperationHistory:
         assert history.get_undo_count() == 2
 
     def test_max_size_limit(self):
-        history = OperationHistory(max_size=3)
+        history = OperationHistory(max_size=3, persist=False)
 
         for i in range(5):
             history.record_batch([RenameOperation(f"/old{i}.txt", f"/new{i}.txt", False)])
@@ -101,7 +103,7 @@ class TestOperationHistory:
         assert history.get_undo_count() == 3
 
     def test_undo_description(self):
-        history = OperationHistory()
+        history = OperationHistory(persist=False)
 
         assert history.undo_description() is None
 
@@ -113,11 +115,11 @@ class TestOperationHistory:
         assert "1" in desc  # Should mention file count
 
     def test_redo_description(self):
-        history = OperationHistory()
+        history = OperationHistory(persist=False)
         assert history.redo_description() is None
 
     def test_clear(self):
-        history = OperationHistory()
+        history = OperationHistory(persist=False)
         history.record_batch([RenameOperation("/a.txt", "/b.txt", False)])
 
         history.clear()
@@ -147,7 +149,7 @@ class TestOperationHistoryWithFiles:
         shutil.move(old_path, new_path)
 
         # Record operation
-        history = OperationHistory()
+        history = OperationHistory(persist=False)
         history.record_batch([RenameOperation(old_path, new_path, was_copy=False)])
 
         # Undo
@@ -169,7 +171,7 @@ class TestOperationHistoryWithFiles:
         shutil.copy2(old_path, new_path)
 
         # Record operation
-        history = OperationHistory()
+        history = OperationHistory(persist=False)
         history.record_batch([RenameOperation(old_path, new_path, was_copy=True)])
 
         # Undo - should delete the copy
@@ -189,7 +191,7 @@ class TestOperationHistoryWithFiles:
 
         # Simulate move and record
         shutil.move(old_path, new_path)
-        history = OperationHistory()
+        history = OperationHistory(persist=False)
         history.record_batch([RenameOperation(old_path, new_path, was_copy=False)])
 
         # Undo
@@ -204,11 +206,11 @@ class TestOperationHistoryWithFiles:
         assert os.path.exists(new_path)
 
     def test_undo_returns_false_when_empty(self):
-        history = OperationHistory()
+        history = OperationHistory(persist=False)
         assert history.undo() is False
 
     def test_redo_returns_false_when_empty(self):
-        history = OperationHistory()
+        history = OperationHistory(persist=False)
         assert history.redo() is False
 
     def test_undo_with_progress_callback(self):
@@ -219,10 +221,77 @@ class TestOperationHistoryWithFiles:
             f.write("test")
         shutil.move(old_path, new_path)
 
-        history = OperationHistory()
+        history = OperationHistory(persist=False)
         history.record_batch([RenameOperation(old_path, new_path, was_copy=False)])
 
         progress_calls = []
         history.undo(on_progress=lambda msg: progress_calls.append(msg))
 
         assert len(progress_calls) > 0
+
+
+class TestOperationHistoryPersistence:
+    """Tests for persistent history storage."""
+
+    def setup_method(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.history_file = Path(self.tmpdir) / "test_undo_history.json"
+
+    def teardown_method(self):
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_saves_to_file_on_record(self):
+        history = OperationHistory(persist=True, filepath=self.history_file)
+        history.record_batch([RenameOperation("/a.txt", "/b.txt", False)])
+
+        assert self.history_file.exists()
+        with open(self.history_file, "r") as f:
+            data = json.load(f)
+        assert len(data["undo_stack"]) == 1
+
+    def test_loads_from_file_on_init(self):
+        data = {
+            "undo_stack": [[{
+                "original_path": "/old.txt",
+                "new_path": "/new.txt",
+                "was_copy": False,
+                "timestamp": "2024-01-15T10:00:00",
+                "backup_path": None
+            }]],
+            "redo_stack": []
+        }
+        with open(self.history_file, "w") as f:
+            json.dump(data, f)
+
+        history = OperationHistory(persist=True, filepath=self.history_file)
+        assert history.can_undo() is True
+        assert history.get_undo_count() == 1
+
+    def test_no_persist_mode(self):
+        history = OperationHistory(persist=False, filepath=self.history_file)
+        history.record_batch([RenameOperation("/a.txt", "/b.txt", False)])
+
+        assert not self.history_file.exists()
+
+    def test_persistence_across_instances(self):
+        history1 = OperationHistory(persist=True, filepath=self.history_file)
+        history1.record_batch([RenameOperation("/a.txt", "/b.txt", False)])
+        history1.record_batch([RenameOperation("/c.txt", "/d.txt", False)])
+
+        history2 = OperationHistory(persist=True, filepath=self.history_file)
+        assert history2.get_undo_count() == 2
+
+    def test_clear_saves_empty_state(self):
+        history = OperationHistory(persist=True, filepath=self.history_file)
+        history.record_batch([RenameOperation("/a.txt", "/b.txt", False)])
+        history.clear()
+
+        history2 = OperationHistory(persist=True, filepath=self.history_file)
+        assert history2.can_undo() is False
+
+    def test_handles_corrupted_file(self):
+        with open(self.history_file, "w") as f:
+            f.write("invalid json {{{")
+
+        history = OperationHistory(persist=True, filepath=self.history_file)
+        assert history.can_undo() is False

@@ -123,6 +123,67 @@ class ProfileManager:
         """Check if profile name exists."""
         return name in self._profiles
 
+    def export_profile(self, name: str, filepath: str) -> bool:
+        """Export a single profile to a JSON file."""
+        profile = self.get_profile(name)
+        if not profile:
+            return False
+        try:
+            data = {
+                "renamer_profile": True,
+                "version": "1.0",
+                "profile": profile.to_dict()
+            }
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            return True
+        except IOError:
+            return False
+
+    def export_all_profiles(self, filepath: str) -> bool:
+        """Export all profiles to a JSON file."""
+        try:
+            data = {
+                "renamer_profiles": True,
+                "version": "1.0",
+                "profiles": {name: p.to_dict() for name, p in self._profiles.items()}
+            }
+            with open(filepath, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            return True
+        except IOError:
+            return False
+
+    def import_profile(self, filepath: str) -> tuple[bool, str]:
+        """Import profile(s) from a JSON file. Returns (success, message)."""
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+
+            imported = 0
+
+            if data.get("renamer_profile"):
+                profile_data = data.get("profile", {})
+                profile = RenameProfile.from_dict(profile_data)
+                if profile.name:
+                    self._profiles[profile.name] = profile
+                    imported = 1
+            elif data.get("renamer_profiles"):
+                for name, profile_data in data.get("profiles", {}).items():
+                    profile = RenameProfile.from_dict(profile_data)
+                    profile.name = name
+                    self._profiles[name] = profile
+                    imported += 1
+            else:
+                return False, "Invalid profile file format"
+
+            if imported > 0:
+                self._save()
+                return True, f"Imported {imported} profile(s)"
+            return False, "No profiles found in file"
+        except (json.JSONDecodeError, IOError) as e:
+            return False, f"Error reading file: {e}"
+
 
 # Global instance
 _profile_manager: Optional[ProfileManager] = None
