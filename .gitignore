@@ -73,3 +73,7 @@ Thumbs.db
 *.log
 upx/
 .venv/
+
+# Executable files
+*.exe
+Renamer.exe

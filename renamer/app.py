@@ -65,7 +65,8 @@ COLORS = {
     "bg_hover": "#2a2a2a",
     "cyan": "#00e5ff",
     "cyan_dark": "#00b8d4",
-    "cyan_dim": "#0097a7",
+    "cyan_dim": "#00838f",
+    "cyan_selection": "#006064",
     "text": "#ffffff",
     "text_secondary": "#b0b0b0",
     "text_dim": "#707070",
@@ -110,8 +111,8 @@ class Settings:
         "ask_metadata_audio": False,
         "use_original_name_fallback": True,
         # Window geometry
-        "window_width": 1280,
-        "window_height": 850,
+        "window_width": 1400,
+        "window_height": 900,
         "window_x": None,
         "window_y": None,
         "window_maximized": False,
@@ -230,21 +231,39 @@ class RenamerApp:
 
         self.root.title("Перейменувач файлів")
 
-        # Restore window geometry from settings
-        width = self.settings.get("window_width", 1280)
-        height = self.settings.get("window_height", 850)
+        # Get screen dimensions for responsive sizing
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+
+        # Calculate default size based on screen (80% of screen, min 1400x900)
+        default_width = max(1400, int(screen_width * 0.8))
+        default_height = max(900, int(screen_height * 0.8))
+
+        # Restore window geometry from settings or use calculated defaults
+        width = self.settings.get("window_width") or default_width
+        height = self.settings.get("window_height") or default_height
         x = self.settings.get("window_x")
         y = self.settings.get("window_y")
 
+        # Ensure window fits on screen
+        width = min(width, screen_width - 50)
+        height = min(height, screen_height - 100)
+
         if x is not None and y is not None:
+            # Ensure position is on screen
+            x = max(0, min(x, screen_width - width))
+            y = max(0, min(y, screen_height - height))
             self.root.geometry(f"{width}x{height}+{x}+{y}")
         else:
-            self.root.geometry(f"{width}x{height}")
+            # Center on screen
+            x = (screen_width - width) // 2
+            y = (screen_height - height) // 2
+            self.root.geometry(f"{width}x{height}+{x}+{y}")
 
         if self.settings.get("window_maximized", False):
             self.root.state('zoomed') if platform.system() == 'Windows' else self.root.attributes('-zoomed', True)
 
-        self.root.minsize(1000, 700)
+        self.root.minsize(1100, 750)
         self.root.configure(bg=COLORS["bg_main"])
 
         # Save geometry on close
@@ -322,8 +341,8 @@ class RenamerApp:
                     foreground=COLORS["cyan"],
                     font=("Segoe UI", 10, "bold"))
         s.map("Treeview",
-              background=[("selected", COLORS["cyan_dim"])],
-              foreground=[("selected", COLORS["text"])])
+              background=[("selected", COLORS["cyan_dark"])],
+              foreground=[("selected", "#000000")])
 
         # Labels
         s.configure("TLabel", background=COLORS["bg_main"], foreground=COLORS["text"])
@@ -488,16 +507,16 @@ class RenamerApp:
 
         tb.Button(btn_grid, text="✓ Все", width=6,
                   command=lambda: self._select_all_in(self.music_state, self.music_tree),
-                  bootstyle="success-outline").grid(row=0, column=0, padx=1, pady=1, sticky="ew")
+                  bootstyle="info-outline").grid(row=0, column=0, padx=1, pady=1, sticky="ew")
         tb.Button(btn_grid, text="✗ Ні", width=6,
                   command=lambda: self._deselect_all_in(self.music_state, self.music_tree),
-                  bootstyle="success-outline").grid(row=0, column=1, padx=1, pady=1, sticky="ew")
+                  bootstyle="info-outline").grid(row=0, column=1, padx=1, pady=1, sticky="ew")
         tb.Button(btn_grid, text="Дубл", width=6,
                   command=lambda: self._find_duplicates(self.music_state, self.music_tree),
-                  bootstyle="success-outline").grid(row=1, column=0, padx=1, pady=1, sticky="ew")
+                  bootstyle="info-outline").grid(row=1, column=0, padx=1, pady=1, sticky="ew")
         tb.Button(btn_grid, text="Очист", width=6,
                   command=lambda: self._clear_all_in(self.music_state, self.music_tree),
-                  bootstyle="danger-outline").grid(row=1, column=1, padx=1, pady=1, sticky="ew")
+                  bootstyle="info-outline").grid(row=1, column=1, padx=1, pady=1, sticky="ew")
 
         # ===== MAIN TEMPLATE SECTION =====
         tmpl_frame = tk.LabelFrame(self.music_frame, text=" 📝 Налаштування перейменування ",
@@ -775,16 +794,16 @@ class RenamerApp:
 
         tb.Button(btn_grid, text="✓ Все", width=6,
                   command=lambda: self._select_all_in(self.files_state, self.files_tree),
-                  bootstyle="success-outline").grid(row=0, column=0, padx=1, pady=1, sticky="ew")
+                  bootstyle="info-outline").grid(row=0, column=0, padx=1, pady=1, sticky="ew")
         tb.Button(btn_grid, text="✗ Ні", width=6,
                   command=lambda: self._deselect_all_in(self.files_state, self.files_tree),
-                  bootstyle="success-outline").grid(row=0, column=1, padx=1, pady=1, sticky="ew")
+                  bootstyle="info-outline").grid(row=0, column=1, padx=1, pady=1, sticky="ew")
         tb.Button(btn_grid, text="Дубл", width=6,
                   command=lambda: self._find_duplicates(self.files_state, self.files_tree),
-                  bootstyle="success-outline").grid(row=1, column=0, padx=1, pady=1, sticky="ew")
+                  bootstyle="info-outline").grid(row=1, column=0, padx=1, pady=1, sticky="ew")
         tb.Button(btn_grid, text="Очист", width=6,
                   command=lambda: self._clear_all_in(self.files_state, self.files_tree),
-                  bootstyle="danger-outline").grid(row=1, column=1, padx=1, pady=1, sticky="ew")
+                  bootstyle="info-outline").grid(row=1, column=1, padx=1, pady=1, sticky="ew")
 
         # ===== MAIN TEMPLATE SECTION =====
         tmpl_frame = tk.LabelFrame(self.files_frame, text=" 📝 Налаштування перейменування ",
