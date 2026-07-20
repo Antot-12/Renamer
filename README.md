@@ -79,6 +79,7 @@ Audio, Images, Documents, Video, Archives, Code, Games, Presentations, and more.
 - **Collapsible Advanced Options** — clean interface with power features hidden until needed
 - **Context Menu** — right-click for quick actions
 - **Live Preview** — see new names as you type
+- **High DPI Support** — crisp display on 4K/Retina monitors (Windows/macOS)
 - **Portable EXE** — no Python installation required
 
 ---
@@ -166,16 +167,46 @@ python run.py
 build.bat
 ```
 
-This creates a lightweight portable EXE (~15-20 MB) in the `dist/` folder.
+This creates a lightweight portable EXE (~12-15 MB) in the `dist/` folder.
 
 ### Option 2: Manual build
 
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --windowed --icon=ico.ico --name=Renamer --exclude-module numpy --exclude-module scipy --exclude-module pandas --exclude-module matplotlib run.py
+pyinstaller --noconfirm Renamer.spec
 ```
 
 The executable will be at `dist/Renamer.exe`
+
+### Option 3: Create Windows Installer
+
+For a full installer with Start Menu shortcuts and context menu integration:
+
+1. Build the EXE first: `build.bat`
+2. Install [Inno Setup](https://jrsoftware.org/isinfo.php)
+3. Run: `iscc installer.iss`
+
+The installer includes:
+- ✅ Start Menu shortcuts
+- ✅ Desktop shortcut (optional)
+- ✅ "Rename with Renamer" context menu (optional)
+- ✅ Proper uninstaller
+
+---
+
+## Windows Integration
+
+### Context Menu
+
+Right-click any file → "Rename with Renamer"
+
+**To add manually (requires admin):**
+```python
+from renamer.windows_integration import add_context_menu
+add_context_menu()  # Adds to file context menu
+```
+
+**Or use the installer** which adds it automatically.
 
 ---
 
@@ -194,7 +225,8 @@ Renamer/
 │   ├── duplicates.py     # Duplicate detection
 │   ├── history_log.py    # Persistent history
 │   ├── musicbrainz.py    # MusicBrainz API integration
-│   └── profiles.py       # Profile management
+│   ├── profiles.py       # Profile management
+│   └── windows_integration.py  # Windows-specific features
 ├── tests/                # Test suite (185+ tests)
 │   ├── test_transformers.py
 │   ├── test_history.py
@@ -205,9 +237,11 @@ Renamer/
 │   └── test_musicbrainz.py
 ├── run.py                # Entry point
 ├── run.bat               # Windows launcher
-├── install.bat           # Windows installer
+├── install.bat           # Windows dependency installer
 ├── build.bat             # Build portable EXE
-├── requirements.txt      # Dependencies
+├── installer.iss         # Inno Setup installer script
+├── requirements.txt      # All dependencies
+├── requirements-prod.txt # Production dependencies only
 └── pyproject.toml        # Package configuration
 ```
 

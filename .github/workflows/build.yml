@@ -1,0 +1,98 @@
+name: Build Windows EXE
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-prod.txt
+          pip install pyinstaller
+
+      - name: Download UPX
+        run: |
+          curl -L -o upx.zip https://github.com/upx/upx/releases/download/v4.2.4/upx-4.2.4-win64.zip
+          Expand-Archive -Path upx.zip -DestinationPath .
+          Rename-Item upx-4.2.4-win64 upx
+
+      - name: Build EXE with PyInstaller
+        run: |
+          pyinstaller --noconfirm --upx-dir=upx Renamer.spec
+
+      - name: Get version from tag
+        id: get_version
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Renamer-Windows-${{ steps.get_version.outputs.VERSION || 'dev' }}
+          path: dist/Renamer.exe
+          retention-days: 30
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/Renamer.exe
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-installer:
+    runs-on: windows-latest
+    needs: build-windows
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download EXE artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Renamer-Windows-${{ needs.build-windows.outputs.VERSION || 'dev' }}
+          path: dist
+
+      - name: Install Inno Setup
+        run: |
+          choco install innosetup -y
+
+      - name: Update version in installer script
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          (Get-Content installer.iss) -replace '#define MyAppVersion "1.0.0"', "#define MyAppVersion `"$version`"" | Set-Content installer.iss
+        shell: pwsh
+
+      - name: Build installer
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+
+      - name: Upload installer to release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: installer_output/Renamer-Setup-*.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

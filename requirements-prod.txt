@@ -1,0 +1,7 @@
+# Production dependencies only (for building EXE)
+# Install with: pip install -r requirements-prod.txt
+
+mutagen>=1.45.0        # Audio metadata extraction
+Pillow>=9.0.0          # Image processing
+tkinterdnd2>=0.3.0     # Drag & drop support
+ttkbootstrap>=1.10.0   # Modern themed UI

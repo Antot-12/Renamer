@@ -21,7 +21,12 @@ EXCLUDES = [
     # Unused stdlib
     'pydoc', 'xmlrpc', 'ftplib', 'lib2to3', 'distutils',
     'pkg_resources', 'curses', 'asyncio', 'concurrent',
-    'multiprocessing.popen_spawn_win32',
+    'multiprocessing', 'multiprocessing.popen_spawn_win32',
+    'sqlite3', 'idlelib', 'email.test', 'tkinter.test',
+    'http.server', 'socketserver', 'ssl', 'telnetlib',
+    'cgi', 'cgitb', 'imaplib', 'nntplib', 'poplib', 'smtplib',
+    'sndhdr', 'sunau', 'wave', 'aifc', 'audioop',
+    'ensurepip', 'venv', 'turtledemo', 'turtle',
     # Windows specific we don't need
     'win32com', 'pywin32',
     # PIL modules we don't need

@@ -77,6 +77,7 @@ pyinstaller ^
     --icon=ico.ico ^
     --add-data "ico.ico;." ^
     %UPX_OPT% ^
+    --strip ^
     --exclude-module numpy ^
     --exclude-module scipy ^
     --exclude-module pandas ^
@@ -94,6 +95,16 @@ pyinstaller ^
     --exclude-module pydoc ^
     --exclude-module test ^
     --exclude-module tkinter.test ^
+    --exclude-module email.test ^
+    --exclude-module idlelib ^
+    --exclude-module sqlite3 ^
+    --exclude-module multiprocessing ^
+    --exclude-module asyncio ^
+    --exclude-module concurrent ^
+    --exclude-module curses ^
+    --exclude-module ftplib ^
+    --exclude-module http.server ^
+    --exclude-module socketserver ^
     --clean ^
     run.py
 

@@ -92,15 +92,63 @@ from renamer.history_log import get_history_log
 from renamer.musicbrainz import search_by_filename, search_recording
 from renamer.profiles import get_profile_manager, RenameProfile
 
-# Enable DPI awareness on Windows
+# ========== DPI Scaling Support ==========
+
+def get_dpi_scale() -> float:
+    """Get the DPI scaling factor for the current display."""
+    if platform.system() == "Windows":
+        try:
+            # Try to get the actual DPI
+            user32 = ctypes.windll.user32
+            hdc = user32.GetDC(0)
+            dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX
+            user32.ReleaseDC(0, hdc)
+            return dpi / 96.0  # 96 is the default DPI
+        except Exception:
+            pass
+    elif platform.system() == "Darwin":
+        # macOS handles scaling automatically, but we can detect Retina
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["system_profiler", "SPDisplaysDataType"],
+                capture_output=True, text=True
+            )
+            if "Retina" in result.stdout:
+                return 2.0
+        except Exception:
+            pass
+    return 1.0
+
+def scale_value(value: int, scale: float = None) -> int:
+    """Scale a value according to DPI."""
+    if scale is None:
+        scale = DPI_SCALE
+    return int(value * scale)
+
+# Enable DPI awareness on Windows BEFORE creating any windows
 if platform.system() == "Windows":
     try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # Per-monitor DPI aware
+        # Windows 10 1607+ - Per Monitor V2 DPI awareness
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except AttributeError:
+        try:
+            # Windows 8.1+ - Per Monitor DPI awareness
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)
+        except AttributeError:
+            try:
+                # Windows Vista+ - System DPI awareness
+                ctypes.windll.user32.SetProcessDPIAware()
+            except Exception:
+                pass
     except Exception:
         try:
             ctypes.windll.user32.SetProcessDPIAware()
         except Exception:
             pass
+
+# Get DPI scale factor
+DPI_SCALE = get_dpi_scale()
 
 # Dark theme with cyan accents - improved readability
 COLORS = {
@@ -121,25 +169,55 @@ COLORS = {
     "warning": "#ff9800",
 }
 
-# Font configuration
+# Font configuration - scaled for DPI
 FONT_FAMILY = "Segoe UI"
 FONT_MONO = "Consolas"
-FONTS = {
-    "title": (FONT_FAMILY, 16, "bold"),
-    "heading": (FONT_FAMILY, 12, "bold"),
-    "normal": (FONT_FAMILY, 10),
-    "bold": (FONT_FAMILY, 10, "bold"),
-    "small": (FONT_FAMILY, 9),
-    "mono": (FONT_MONO, 10),
-}
 
-# UI sizes
-SIZES = {
-    "entry_width": 15,
-    "combo_width": 25,
-    "padding": 15,
-    "row_height": 28,
-}
+def get_scaled_fonts(scale: float = None) -> dict:
+    """Get fonts scaled for the current DPI."""
+    if scale is None:
+        scale = DPI_SCALE
+    # Base sizes at 100% scaling
+    base_sizes = {
+        "title": 16,
+        "heading": 12,
+        "normal": 10,
+        "bold": 10,
+        "small": 9,
+        "mono": 10,
+    }
+    # Scale fonts - but not below readable sizes
+    # For high DPI, tkinter often handles this, so we apply modest scaling
+    # Only scale up if DPI > 1.25 to avoid making fonts too large
+    font_scale = max(1.0, (scale - 1.0) * 0.5 + 1.0) if scale > 1.25 else 1.0
+    return {
+        "title": (FONT_FAMILY, int(base_sizes["title"] * font_scale), "bold"),
+        "heading": (FONT_FAMILY, int(base_sizes["heading"] * font_scale), "bold"),
+        "normal": (FONT_FAMILY, int(base_sizes["normal"] * font_scale)),
+        "bold": (FONT_FAMILY, int(base_sizes["bold"] * font_scale), "bold"),
+        "small": (FONT_FAMILY, int(base_sizes["small"] * font_scale)),
+        "mono": (FONT_MONO, int(base_sizes["mono"] * font_scale)),
+    }
+
+FONTS = get_scaled_fonts()
+
+# UI sizes - scaled for DPI
+def get_scaled_sizes(scale: float = None) -> dict:
+    """Get UI sizes scaled for the current DPI."""
+    if scale is None:
+        scale = DPI_SCALE
+    base_sizes = {
+        "entry_width": 15,
+        "combo_width": 25,
+        "padding": 15,
+        "row_height": 28,
+        "button_padding": 8,
+        "icon_size": 32,
+        "tooltip_padding": 8,
+    }
+    return {k: scale_value(v, scale) for k, v in base_sizes.items()}
+
+SIZES = get_scaled_sizes()
 
 
 class Settings:
@@ -279,7 +357,7 @@ class RenamerApp:
         self._update_profile_combos()
 
     def _setup_root(self) -> None:
-        """Ініціалізація головного вікна."""
+        """Ініціалізація головного вікна з підтримкою DPI."""
         if DND_AVAILABLE:
             try:
                 self.root = TkinterDnD.Tk()
@@ -293,13 +371,24 @@ class RenamerApp:
 
         self.root.title("Перейменувач файлів")
 
+        # Apply DPI scaling to tkinter
+        if platform.system() == "Windows" and DPI_SCALE > 1.0:
+            try:
+                # Tell tkinter to use the system DPI
+                self.root.tk.call('tk', 'scaling', DPI_SCALE)
+            except Exception:
+                pass
+
         # Get screen dimensions for responsive sizing
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
 
         # Calculate default size based on screen (80% of screen, min 1400x900)
-        default_width = max(1400, int(screen_width * 0.8))
-        default_height = max(900, int(screen_height * 0.8))
+        # Scale minimum sizes for high DPI displays
+        min_width = scale_value(1400)
+        min_height = scale_value(900)
+        default_width = max(min_width, int(screen_width * 0.8))
+        default_height = max(min_height, int(screen_height * 0.8))
 
         # Restore window geometry from settings or use calculated defaults
         width = self.settings.get("window_width") or default_width
@@ -325,7 +414,8 @@ class RenamerApp:
         if self.settings.get("window_maximized", False):
             self.root.state('zoomed') if platform.system() == 'Windows' else self.root.attributes('-zoomed', True)
 
-        self.root.minsize(1100, 750)
+        # Scale minimum window size for DPI
+        self.root.minsize(scale_value(1100), scale_value(750))
         self.root.configure(bg=COLORS["bg_main"])
 
         # Save geometry on close
@@ -359,14 +449,17 @@ class RenamerApp:
         self.root.destroy()
 
     def _configure_styles(self) -> None:
-        """Налаштування стилів."""
+        """Налаштування стилів з підтримкою DPI."""
         s = self.style
+
+        # Get scaled row height for treeview
+        scaled_row_height = scale_value(28)
 
         # Custom cyan button style
         s.configure("Cyan.TButton",
                     background=COLORS["cyan"],
                     foreground="#000000",
-                    font=("Segoe UI", 10))
+                    font=FONTS["normal"])
         s.map("Cyan.TButton",
               background=[("active", COLORS["cyan_dark"]), ("pressed", COLORS["cyan_dim"])],
               foreground=[("active", "#000000"), ("pressed", "#000000")])
@@ -378,50 +471,51 @@ class RenamerApp:
                     bordercolor=COLORS["cyan"],
                     relief="solid",
                     borderwidth=1,
-                    font=("Segoe UI", 10))
+                    font=FONTS["normal"])
         s.map("CyanOutline.TButton",
               background=[("active", COLORS["cyan_dim"]), ("pressed", COLORS["cyan_dark"])],
               foreground=[("active", "#ffffff"), ("pressed", "#ffffff")])
 
-        # Notebook tabs
+        # Notebook tabs - scaled padding
+        tab_padding = [scale_value(20), scale_value(10)]
         s.configure("TNotebook", background=COLORS["bg_main"])
         s.configure("TNotebook.Tab",
                     background=COLORS["bg_secondary"],
                     foreground=COLORS["text"],
-                    padding=[20, 10],
-                    font=("Segoe UI", 11))
+                    padding=tab_padding,
+                    font=FONTS["heading"])
         s.map("TNotebook.Tab",
               background=[("selected", COLORS["cyan_dim"])],
               foreground=[("selected", COLORS["text"])])
 
-        # Treeview
+        # Treeview - scaled row height for better readability on high DPI
         s.configure("Treeview",
                     background=COLORS["bg_input"],
                     foreground=COLORS["text"],
                     fieldbackground=COLORS["bg_input"],
-                    font=("Segoe UI", 10),
-                    rowheight=28)
+                    font=FONTS["normal"],
+                    rowheight=scaled_row_height)
         s.configure("Treeview.Heading",
                     background=COLORS["bg_secondary"],
                     foreground=COLORS["cyan"],
-                    font=("Segoe UI", 10, "bold"))
+                    font=FONTS["bold"])
         s.map("Treeview",
               background=[("selected", COLORS["cyan_dark"])],
               foreground=[("selected", "#000000")])
 
         # Labels
         s.configure("TLabel", background=COLORS["bg_main"], foreground=COLORS["text"])
-        s.configure("Accent.TLabel", foreground=COLORS["cyan"], font=("Segoe UI", 10, "bold"))
+        s.configure("Accent.TLabel", foreground=COLORS["cyan"], font=FONTS["bold"])
 
         # LabelFrame
         s.configure("TLabelframe", background=COLORS["bg_main"])
         s.configure("TLabelframe.Label",
                     background=COLORS["bg_main"],
                     foreground=COLORS["cyan"],
-                    font=("Segoe UI", 10, "bold"))
+                    font=FONTS["bold"])
 
-        # Combobox
-        s.configure("TCombobox", padding=5)
+        # Combobox - scaled padding
+        s.configure("TCombobox", padding=scale_value(5))
 
     def _setup_variables(self) -> None:
         """Ініціалізація змінних tkinter."""
