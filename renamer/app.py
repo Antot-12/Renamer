@@ -696,80 +696,75 @@ class RenamerApp:
 
         # ===== MAIN TEMPLATE SECTION =====
         tmpl_frame = tk.LabelFrame(self.music_frame, text=" 📝 Налаштування перейменування ",
-                                    bg=COLORS["bg_main"], fg=COLORS["cyan"], font=("Segoe UI", 10, "bold"))
+                                    bg=COLORS["bg_main"], fg=COLORS["cyan"], font=FONTS["bold"])
         tmpl_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
 
         inner = tk.Frame(tmpl_frame, bg=COLORS["bg_main"])
         inner.pack(fill=tk.X, padx=15, pady=12)
 
-        # Row 1: Template (most important) + Profile
+        # Row 1: Template + Profile - CENTERED
         row1 = tk.Frame(inner, bg=COLORS["bg_main"])
-        row1.pack(fill=tk.X, pady=(0, 10))
+        row1.pack(pady=(0, 10))
 
         tk.Label(row1, text="🎯 Шаблон:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
-                 font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+                 font=FONTS["bold"]).pack(side=tk.LEFT)
         music_combo = ttk.Combobox(row1, textvariable=self.music_tmpl_var,
-                                    values=list(self.AUDIO_TEMPLATES.keys()), width=24, state="readonly")
-        music_combo.pack(side=tk.LEFT, padx=(8, 20))
+                                    values=list(self.AUDIO_TEMPLATES.keys()), width=22, state="readonly")
+        music_combo.pack(side=tk.LEFT, padx=(8, 25))
         music_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_music())
 
         tk.Label(row1, text="Профіль:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
-                 font=("Segoe UI", 10)).pack(side=tk.LEFT)
+                 font=FONTS["normal"]).pack(side=tk.LEFT)
         self.music_profile_combo = ttk.Combobox(row1, textvariable=self.music_profile_var,
-                                                 values=[], width=14, state="readonly")
-        self.music_profile_combo.pack(side=tk.LEFT, padx=(8, 5))
+                                                 values=[], width=12, state="readonly")
+        self.music_profile_combo.pack(side=tk.LEFT, padx=(8, 8))
         self.music_profile_combo.bind("<<ComboboxSelected>>", lambda e: self._load_profile_music())
 
-        self._create_button(row1, "💾", lambda: self._save_profile_music(), "outline", "Зберегти профіль").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "🗑", lambda: self._delete_profile_music(), "outline", "Видалити профіль").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "📤", lambda: self._export_profile("audio"), "outline", "Експортувати профіль").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "📥", lambda: self._import_profile("audio"), "outline", "Імпортувати профіль").pack(side=tk.LEFT, padx=2)
+        # Profile buttons in a compact group
+        profile_btns = tk.Frame(row1, bg=COLORS["bg_main"])
+        profile_btns.pack(side=tk.LEFT)
+        self._create_button(profile_btns, "💾", lambda: self._save_profile_music(), "outline", "Зберегти профіль").pack(side=tk.LEFT, padx=1)
+        self._create_button(profile_btns, "🗑", lambda: self._delete_profile_music(), "outline", "Видалити профіль").pack(side=tk.LEFT, padx=1)
+        self._create_button(profile_btns, "📤", lambda: self._export_profile("audio"), "outline", "Експортувати профіль").pack(side=tk.LEFT, padx=1)
+        self._create_button(profile_btns, "📥", lambda: self._import_profile("audio"), "outline", "Імпортувати профіль").pack(side=tk.LEFT, padx=1)
 
         # Separator
-        ttk.Separator(inner, orient="horizontal").pack(fill=tk.X, pady=8)
+        ttk.Separator(inner, orient="horizontal").pack(fill=tk.X, pady=10)
 
-        # Row 2: Basic options in a cleaner grid
+        # Row 2: Basic options - CENTERED with grid layout
         row2 = tk.Frame(inner, bg=COLORS["bg_main"])
-        row2.pack(fill=tk.X, pady=(0, 8))
+        row2.pack(pady=(0, 8))
 
-        # Left column: Prefix/Suffix
-        col1 = tk.Frame(row2, bg=COLORS["bg_main"])
-        col1.pack(side=tk.LEFT, padx=(0, 30))
+        # Use grid for perfect alignment
+        tk.Label(row2, text="Префікс:", bg=COLORS["bg_main"], fg=COLORS["text"],
+                 font=FONTS["small"]).grid(row=0, column=0, sticky="e", padx=(0, 8))
+        ttk.Entry(row2, textvariable=self.music_pre_var, width=12).grid(row=0, column=1, padx=(0, 20))
 
-        tk.Label(col1, text="Префікс:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
-                 font=("Segoe UI", 9)).grid(row=0, column=0, sticky="e", padx=(0, 5))
-        ttk.Entry(col1, textvariable=self.music_pre_var, width=14).grid(row=0, column=1)
+        tk.Label(row2, text="Знайти:", bg=COLORS["bg_main"], fg=COLORS["text"],
+                 font=FONTS["small"]).grid(row=0, column=2, sticky="e", padx=(0, 8))
+        ttk.Entry(row2, textvariable=self.music_find_var, width=12).grid(row=0, column=3, padx=(0, 20))
 
-        tk.Label(col1, text="Суфікс:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
-                 font=("Segoe UI", 9)).grid(row=1, column=0, sticky="e", padx=(0, 5), pady=(5, 0))
-        ttk.Entry(col1, textvariable=self.music_suf_var, width=14).grid(row=1, column=1, pady=(5, 0))
+        # Checkboxes on the right
+        cb_frame = tk.Frame(row2, bg=COLORS["bg_main"])
+        cb_frame.grid(row=0, column=4, rowspan=2, padx=(10, 0), sticky="w")
+        tb.Checkbutton(cb_frame, text="Regex", variable=self.music_regex_var,
+                       bootstyle="info-round-toggle").pack(anchor="w")
+        tb.Checkbutton(cb_frame, text="Trim пробіли", variable=self.music_trim_var,
+                       bootstyle="info-round-toggle").pack(anchor="w", pady=(4, 0))
 
-        # Middle column: Find/Replace
-        col2 = tk.Frame(row2, bg=COLORS["bg_main"])
-        col2.pack(side=tk.LEFT, padx=(0, 30))
+        tk.Label(row2, text="Суфікс:", bg=COLORS["bg_main"], fg=COLORS["text"],
+                 font=FONTS["small"]).grid(row=1, column=0, sticky="e", padx=(0, 8), pady=(8, 0))
+        ttk.Entry(row2, textvariable=self.music_suf_var, width=12).grid(row=1, column=1, padx=(0, 20), pady=(8, 0))
 
-        tk.Label(col2, text="Знайти:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
-                 font=("Segoe UI", 9)).grid(row=0, column=0, sticky="e", padx=(0, 5))
-        ttk.Entry(col2, textvariable=self.music_find_var, width=14).grid(row=0, column=1)
-
-        tk.Label(col2, text="Замінити:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
-                 font=("Segoe UI", 9)).grid(row=1, column=0, sticky="e", padx=(0, 5), pady=(5, 0))
-        ttk.Entry(col2, textvariable=self.music_repl_var, width=14).grid(row=1, column=1, pady=(5, 0))
-
-        # Right column: Toggles
-        col3 = tk.Frame(row2, bg=COLORS["bg_main"])
-        col3.pack(side=tk.LEFT)
-
-        tb.Checkbutton(col3, text="Regex", variable=self.music_regex_var,
-                       bootstyle="success").pack(anchor="w")
-        tb.Checkbutton(col3, text="Trim пробіли", variable=self.music_trim_var,
-                       bootstyle="success").pack(anchor="w", pady=(5, 0))
+        tk.Label(row2, text="Замінити:", bg=COLORS["bg_main"], fg=COLORS["text"],
+                 font=FONTS["small"]).grid(row=1, column=2, sticky="e", padx=(0, 8), pady=(8, 0))
+        ttk.Entry(row2, textvariable=self.music_repl_var, width=12).grid(row=1, column=3, padx=(0, 20), pady=(8, 0))
 
         # ===== ADVANCED OPTIONS (Collapsible) =====
         self.music_adv_visible = tk.BooleanVar(value=False)
 
         adv_toggle = tk.Frame(inner, bg=COLORS["bg_main"])
-        adv_toggle.pack(fill=tk.X, pady=(5, 0))
+        adv_toggle.pack(pady=(8, 0))
 
         def toggle_advanced():
             self.music_adv_visible.set(not self.music_adv_visible.get())
@@ -782,7 +777,7 @@ class RenamerApp:
 
         adv_btn = tb.Button(adv_toggle, text="▶ Розширені опції", command=toggle_advanced,
                             bootstyle="link")
-        adv_btn.pack(side=tk.LEFT)
+        adv_btn.pack()
 
         # Advanced options frame (initially hidden)
         music_adv_frame = tk.Frame(inner, bg=COLORS["bg_secondary"])
@@ -994,80 +989,75 @@ class RenamerApp:
 
         # ===== MAIN TEMPLATE SECTION =====
         tmpl_frame = tk.LabelFrame(self.files_frame, text=" 📝 Налаштування перейменування ",
-                                    bg=COLORS["bg_main"], fg=COLORS["cyan"], font=("Segoe UI", 10, "bold"))
+                                    bg=COLORS["bg_main"], fg=COLORS["cyan"], font=FONTS["bold"])
         tmpl_frame.pack(fill=tk.X, padx=15, pady=(0, 10))
 
         inner = tk.Frame(tmpl_frame, bg=COLORS["bg_main"])
         inner.pack(fill=tk.X, padx=15, pady=12)
 
-        # Row 1: Template (most important) + Profile
+        # Row 1: Template + Profile - CENTERED
         row1 = tk.Frame(inner, bg=COLORS["bg_main"])
-        row1.pack(fill=tk.X, pady=(0, 10))
+        row1.pack(pady=(0, 10))
 
         tk.Label(row1, text="🎯 Шаблон:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
-                 font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT)
+                 font=FONTS["bold"]).pack(side=tk.LEFT)
         files_combo = ttk.Combobox(row1, textvariable=self.files_tmpl_var,
-                                    values=list(self.FILE_TEMPLATES.keys()), width=24, state="readonly")
-        files_combo.pack(side=tk.LEFT, padx=(8, 20))
+                                    values=list(self.FILE_TEMPLATES.keys()), width=22, state="readonly")
+        files_combo.pack(side=tk.LEFT, padx=(8, 25))
         files_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_files())
 
         tk.Label(row1, text="Профіль:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
-                 font=("Segoe UI", 10)).pack(side=tk.LEFT)
+                 font=FONTS["normal"]).pack(side=tk.LEFT)
         self.files_profile_combo = ttk.Combobox(row1, textvariable=self.files_profile_var,
-                                                 values=[], width=14, state="readonly")
-        self.files_profile_combo.pack(side=tk.LEFT, padx=(8, 5))
+                                                 values=[], width=12, state="readonly")
+        self.files_profile_combo.pack(side=tk.LEFT, padx=(8, 8))
         self.files_profile_combo.bind("<<ComboboxSelected>>", lambda e: self._load_profile_files())
 
-        self._create_button(row1, "💾", lambda: self._save_profile_files(), "outline", "Зберегти профіль").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "🗑", lambda: self._delete_profile_files(), "outline", "Видалити профіль").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "📤", lambda: self._export_profile("general"), "outline", "Експортувати профіль").pack(side=tk.LEFT, padx=2)
-        self._create_button(row1, "📥", lambda: self._import_profile("general"), "outline", "Імпортувати профіль").pack(side=tk.LEFT, padx=2)
+        # Profile buttons in a compact group
+        profile_btns = tk.Frame(row1, bg=COLORS["bg_main"])
+        profile_btns.pack(side=tk.LEFT)
+        self._create_button(profile_btns, "💾", lambda: self._save_profile_files(), "outline", "Зберегти профіль").pack(side=tk.LEFT, padx=1)
+        self._create_button(profile_btns, "🗑", lambda: self._delete_profile_files(), "outline", "Видалити профіль").pack(side=tk.LEFT, padx=1)
+        self._create_button(profile_btns, "📤", lambda: self._export_profile("general"), "outline", "Експортувати профіль").pack(side=tk.LEFT, padx=1)
+        self._create_button(profile_btns, "📥", lambda: self._import_profile("general"), "outline", "Імпортувати профіль").pack(side=tk.LEFT, padx=1)
 
         # Separator
-        ttk.Separator(inner, orient="horizontal").pack(fill=tk.X, pady=8)
+        ttk.Separator(inner, orient="horizontal").pack(fill=tk.X, pady=10)
 
-        # Row 2: Basic options in a cleaner grid
+        # Row 2: Basic options - CENTERED with grid layout
         row2 = tk.Frame(inner, bg=COLORS["bg_main"])
-        row2.pack(fill=tk.X, pady=(0, 8))
+        row2.pack(pady=(0, 8))
 
-        # Left column: Prefix/Suffix
-        col1 = tk.Frame(row2, bg=COLORS["bg_main"])
-        col1.pack(side=tk.LEFT, padx=(0, 30))
+        # Use grid for perfect alignment
+        tk.Label(row2, text="Префікс:", bg=COLORS["bg_main"], fg=COLORS["text"],
+                 font=FONTS["small"]).grid(row=0, column=0, sticky="e", padx=(0, 8))
+        ttk.Entry(row2, textvariable=self.files_pre_var, width=12).grid(row=0, column=1, padx=(0, 20))
 
-        tk.Label(col1, text="Префікс:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
-                 font=("Segoe UI", 9)).grid(row=0, column=0, sticky="e", padx=(0, 5))
-        ttk.Entry(col1, textvariable=self.files_pre_var, width=14).grid(row=0, column=1)
+        tk.Label(row2, text="Знайти:", bg=COLORS["bg_main"], fg=COLORS["text"],
+                 font=FONTS["small"]).grid(row=0, column=2, sticky="e", padx=(0, 8))
+        ttk.Entry(row2, textvariable=self.files_find_var, width=12).grid(row=0, column=3, padx=(0, 20))
 
-        tk.Label(col1, text="Суфікс:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
-                 font=("Segoe UI", 9)).grid(row=1, column=0, sticky="e", padx=(0, 5), pady=(5, 0))
-        ttk.Entry(col1, textvariable=self.files_suf_var, width=14).grid(row=1, column=1, pady=(5, 0))
+        # Checkboxes on the right
+        cb_frame = tk.Frame(row2, bg=COLORS["bg_main"])
+        cb_frame.grid(row=0, column=4, rowspan=2, padx=(10, 0), sticky="w")
+        tb.Checkbutton(cb_frame, text="Regex", variable=self.files_regex_var,
+                       bootstyle="info-round-toggle").pack(anchor="w")
+        tb.Checkbutton(cb_frame, text="Trim пробіли", variable=self.files_trim_var,
+                       bootstyle="info-round-toggle").pack(anchor="w", pady=(4, 0))
 
-        # Middle column: Find/Replace
-        col2 = tk.Frame(row2, bg=COLORS["bg_main"])
-        col2.pack(side=tk.LEFT, padx=(0, 30))
+        tk.Label(row2, text="Суфікс:", bg=COLORS["bg_main"], fg=COLORS["text"],
+                 font=FONTS["small"]).grid(row=1, column=0, sticky="e", padx=(0, 8), pady=(8, 0))
+        ttk.Entry(row2, textvariable=self.files_suf_var, width=12).grid(row=1, column=1, padx=(0, 20), pady=(8, 0))
 
-        tk.Label(col2, text="Знайти:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
-                 font=("Segoe UI", 9)).grid(row=0, column=0, sticky="e", padx=(0, 5))
-        ttk.Entry(col2, textvariable=self.files_find_var, width=14).grid(row=0, column=1)
-
-        tk.Label(col2, text="Замінити:", bg=COLORS["bg_main"], fg=COLORS["cyan"],
-                 font=("Segoe UI", 9)).grid(row=1, column=0, sticky="e", padx=(0, 5), pady=(5, 0))
-        ttk.Entry(col2, textvariable=self.files_repl_var, width=14).grid(row=1, column=1, pady=(5, 0))
-
-        # Right column: Toggles
-        col3 = tk.Frame(row2, bg=COLORS["bg_main"])
-        col3.pack(side=tk.LEFT)
-
-        tb.Checkbutton(col3, text="Regex", variable=self.files_regex_var,
-                       bootstyle="success").pack(anchor="w")
-        tb.Checkbutton(col3, text="Trim пробіли", variable=self.files_trim_var,
-                       bootstyle="success").pack(anchor="w", pady=(5, 0))
+        tk.Label(row2, text="Замінити:", bg=COLORS["bg_main"], fg=COLORS["text"],
+                 font=FONTS["small"]).grid(row=1, column=2, sticky="e", padx=(0, 8), pady=(8, 0))
+        ttk.Entry(row2, textvariable=self.files_repl_var, width=12).grid(row=1, column=3, padx=(0, 20), pady=(8, 0))
 
         # ===== ADVANCED OPTIONS (Collapsible) =====
         self.files_adv_visible = tk.BooleanVar(value=False)
 
         adv_toggle = tk.Frame(inner, bg=COLORS["bg_main"])
-        adv_toggle.pack(fill=tk.X, pady=(5, 0))
+        adv_toggle.pack(pady=(8, 0))
 
         def toggle_advanced():
             self.files_adv_visible.set(not self.files_adv_visible.get())
@@ -1080,7 +1070,7 @@ class RenamerApp:
 
         adv_btn = tb.Button(adv_toggle, text="▶ Розширені опції", command=toggle_advanced,
                             bootstyle="link")
-        adv_btn.pack(side=tk.LEFT)
+        adv_btn.pack()
 
         # Advanced options frame (initially hidden)
         files_adv_frame = tk.Frame(inner, bg=COLORS["bg_secondary"])
@@ -1094,21 +1084,21 @@ class RenamerApp:
 
         # Numbering
         num_frame = tk.LabelFrame(adv_row, text="Нумерація", bg=COLORS["bg_secondary"],
-                                   fg=COLORS["cyan"], font=("Segoe UI", 9))
+                                   fg=COLORS["cyan"], font=FONTS["small"])
         num_frame.pack(side=tk.LEFT, padx=(0, 15))
         num_inner = tk.Frame(num_frame, bg=COLORS["bg_secondary"])
         num_inner.pack(padx=8, pady=5)
 
         tk.Label(num_inner, text="Старт:", bg=COLORS["bg_secondary"], fg=COLORS["cyan"],
-                 font=("Segoe UI", 8)).grid(row=0, column=0)
+                 font=FONTS["small"]).grid(row=0, column=0)
         ttk.Spinbox(num_inner, textvariable=self.files_num_start_var, from_=0, to=9999,
                     width=4).grid(row=0, column=1, padx=2)
         tk.Label(num_inner, text="Крок:", bg=COLORS["bg_secondary"], fg=COLORS["cyan"],
-                 font=("Segoe UI", 8)).grid(row=0, column=2, padx=(5, 0))
+                 font=FONTS["small"]).grid(row=0, column=2, padx=(5, 0))
         ttk.Spinbox(num_inner, textvariable=self.files_num_step_var, from_=1, to=100,
                     width=3).grid(row=0, column=3, padx=2)
         tk.Label(num_inner, text="Цифри:", bg=COLORS["bg_secondary"], fg=COLORS["cyan"],
-                 font=("Segoe UI", 8)).grid(row=0, column=4, padx=(5, 0))
+                 font=FONTS["small"]).grid(row=0, column=4, padx=(5, 0))
         ttk.Spinbox(num_inner, textvariable=self.files_num_padding_var, from_=1, to=5,
                     width=3).grid(row=0, column=5, padx=2)
 
